@@ -1,6 +1,10 @@
 /*
- * Test-only shim for the popup: answers the four messages the popup sends, and records what it
- * asks the tab to do. The popup's own scripts (popup.js, popup.css, popup.html) are unmodified.
+ * Test-only shim for the popup: answers the messages the popup sends, and records what it asks
+ * the tab to do. The popup's own scripts (popup.js, popup.css, popup.html) are unmodified.
+ *
+ * `svb:tab-fill` and `svb:tab-probe` are the background's job in production (including injecting
+ * the content script into a tab that has none); here the tab is simulated, so the shim records the
+ * forward exactly as the background would make it.
  */
 (function () {
   "use strict";
@@ -38,6 +42,16 @@
         if (message.type === "svb:candidates") return Promise.resolve(CANDIDATES);
         if (message.type === "svb:set-port") {
           return Promise.resolve({ ok: true, port: Number(message.port) });
+        }
+        if (message.type === "svb:tab-fill") {
+          window.browser.tabs.sendMessage(message.tabId, {
+            type: "svb:fill-path",
+            path: message.path
+          });
+          return Promise.resolve({ ok: true, filled: "username+password" });
+        }
+        if (message.type === "svb:tab-probe") {
+          return Promise.resolve({ ok: true, host: "127.0.0.1", forms: 1, fillable: true });
         }
         return Promise.resolve({ ok: true });
       }

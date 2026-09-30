@@ -128,7 +128,9 @@ class HarnessServer(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - http.server's spelling
         clean = self.path.split("?", 1)[0]
-        if clean in ("/harness/login.html", "/harness/popup.html", "/harness/legacy.html"):
+        if clean.startswith("/harness/"):
+            # Only the harness pages are generated on the fly; every other path (the add-on's own
+            # files, the test assets, the demo pages) is served from disk by translate_path().
             if clean.endswith("legacy.html"):
                 port = self.server.server_address[1]      # this server plays the old vault
                 body = self._harness_page("/harness/login.html", port=port).encode("utf-8")
@@ -187,7 +189,18 @@ class HarnessServer(http.server.SimpleHTTPRequestHandler):
                 '    <script src="/assets/popup-shim.js"></script>'
             )
             return page.replace("</head>", scripts + "\n  </head>")
-        page = (DEMO / "login.html").read_text(encoding="utf-8")
+        # One demo page per login shape: the plain form, the two-step (e-mail first) form, and a
+        # page with no form at all.
+        name = clean.rsplit("/", 1)[-1]
+        if name == "blank.html":
+            page = (
+                '<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">'
+                "<title>بدون فرم</title></head><body><h1>هیچ فرم ورودی نیست</h1></body></html>"
+            )
+        elif name == "two-step.html":
+            page = (DEMO / "two-step.html").read_text(encoding="utf-8")
+        else:
+            page = (DEMO / "login.html").read_text(encoding="utf-8")
         scripts = "\n".join(
             f'    <script src="{shared}"></script>'
             for shared in (
@@ -444,12 +457,69 @@ def run_scenario(cdp: Cdp, checks: Checks, harness_base: str, session: object, b
                     " return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })())"
                 )
             )
+            checks.check(
+                "the popup says what it sees in this tab",
+                "فیلد ورود"
+                in (
+                    cdp.evaluate(
+                        "document.querySelector('#list .note')"
+                        " ? document.querySelector('#list .note').textContent : ''"
+                    )
+                    or ""
+                ),
+            )
             cdp.click(box["x"], box["y"])
             handed = cdp.wait_for("window.__tabMessages.length > 0")
             checks.check("clicking a row asks the content script to fill that entry", handed)
             messages = json.loads(cdp.evaluate("JSON.stringify(window.__popup.tabMessages())") or "[]")
             checks.equal("the hand-off carries the entry's path", messages[0]["message"]["path"] if messages else "", CREDENTIAL_PATH)
             checks.equal("the hand-off goes to the active tab", messages[0]["tabId"] if messages else None, 7)
+
+    # 6b. A two-step sign-in: the e-mail box deserves its own icon even though a password box
+    # exists — invisibly — elsewhere on the page. This is the shape of real sign-in pages.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/two-step.html"})
+    ready = cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    checks.check("the two-step page loaded", ready)
+    icons = json.loads(cdp.evaluate("JSON.stringify(window.__probe.icons())") or "[]")
+    checks.equal("the e-mail box of a two-step sign-in gets an icon", len(icons), 1)
+    if icons:
+        cdp.click(icons[0]["x"], icons[0]["y"])
+        opened = cdp.wait_for("window.__probe.panelText().indexOf('…') < 0")
+        checks.check("the two-step panel answered", opened)
+        rows = json.loads(cdp.evaluate("JSON.stringify(window.__probe.items())") or "[]")
+        checks.check("the two-step panel offers the entry", len(rows) >= 1, rows)
+    checks.equal(
+        "the invisible password box was not touched",
+        cdp.evaluate("document.getElementById('pass-hidden').value"),
+        "",
+    )
+    checks.equal(
+        "the e-mail box stayed empty until a click",
+        cdp.evaluate("document.getElementById('identifier').value"),
+        "",
+    )
+
+    # 6c. A page with no login form says so, instead of offering nothing in silence.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/blank.html"})
+    ready = cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    checks.check("the form-less page loaded", ready)
+    checks.equal(
+        "no icon is drawn where there is no form",
+        len(json.loads(cdp.evaluate("JSON.stringify(window.__probe.icons())") or "[]")),
+        0,
+    )
+    probe_answer = json.loads(
+        cdp.evaluate('(async () => JSON.stringify(await window.browser.runtime.sendMessage({type: "svb:ping"})))()')
+    )
+    checks.check(
+        "the tab reports it has nothing to fill",
+        probe_answer.get("forms") == 0 and probe_answer.get("fillable") is False,
+        probe_answer,
+    )
+    fill_answer = json.loads(
+        cdp.evaluate('(async () => JSON.stringify(await window.browser.runtime.sendMessage({type: "svb:fill-path", path: "/x"})))()')
+    )
+    checks.check("a fill request on such a page answers why", fill_answer.get("reason") == "no_form", fill_answer)
 
     # 7. A vault without the bridge (an older build) is reported honestly — and hands over no token.
     cdp.send("Page.navigate", {"url": f"{harness_base}/harness/legacy.html"})
@@ -488,9 +558,10 @@ def run_scenario(cdp: Cdp, checks: Checks, harness_base: str, session: object, b
         checks.equal("the reveal was allowed", reveals[0][2], "allow")
         checks.equal("the reveal names the entry's path", reveals[0][3], CREDENTIAL_PATH)
     checks.equal(
-        "both lookups were logged (metadata only, no path)",
+        # The popup's list, the login page's panel, and the two-step page's panel.
+        "every lookup was logged (metadata only, no path)",
         sum(1 for row in tools if row[0] == "vault.browser_match"),
-        2,
+        3,
     )
     checks.check(
         "the metadata scan wrote no per-file read rows",

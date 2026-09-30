@@ -169,6 +169,64 @@ async function onOpenVault() {
   return { ok: true, url: url };
 }
 
+/**
+ * Make sure the content script is answering in this tab.
+ *
+ * A tab that was already open when the add-on was installed has no content script in it, and a
+ * click in the popup would then do nothing at all. Inject it on demand instead — and say so
+ * plainly when even that is refused (about:, the add-on store, a PDF viewer).
+ */
+async function ensureContent(tabId) {
+  try {
+    return await browser.tabs.sendMessage(tabId, { type: "svb:ping" });
+  } catch (error) {
+    // No receiver in that tab: fall through and inject the content script.
+  }
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      files: ["content/content.js"]
+    });
+  } catch (error) {
+    return { ok: false, code: "NO_CONTENT", text: "این صفحه اجازهٔ فعال‌شدن افزونه را نمی‌دهد." };
+  }
+  try {
+    return await browser.tabs.sendMessage(tabId, { type: "svb:ping" });
+  } catch (error) {
+    return { ok: false, code: "NO_CONTENT", text: "افزونه در این تب فعال نشد؛ صفحه را دوباره بارگذاری کن (F5)." };
+  }
+}
+
+/** Handler: what the add-on sees in one tab right now (the popup's per-tab line). */
+async function onTabProbe(message) {
+  const tabId = Number(message && message.tabId);
+  if (!tabId) return failure({ code: "BAD_REQUEST" });
+  const probe = await ensureContent(tabId);
+  if (probe && probe.ok) return probe;
+  return {
+    ok: false,
+    code: (probe && probe.code) || "NO_CONTENT",
+    text: (probe && probe.text) || "این تب در دسترس افزونه نیست."
+  };
+}
+
+/** Handler: fill one entry in one tab (the popup path; the content script owns the form). */
+async function onTabFill(message) {
+  const tabId = Number(message && message.tabId);
+  const path = String((message && message.path) || "");
+  if (!tabId || !path) return failure({ code: "BAD_REQUEST" });
+  const probe = await ensureContent(tabId);
+  if (!probe || !probe.ok) {
+    return {
+      ok: false,
+      code: (probe && probe.code) || "NO_CONTENT",
+      text: (probe && probe.text) || "این تب در دسترس افزونه نیست."
+    };
+  }
+  const answer = await browser.tabs.sendMessage(tabId, { type: "svb:fill-path", path: path });
+  return answer || { ok: false, code: "NO_ANSWER", text: "پاسخی از صفحه نیامد." };
+}
+
 browser.runtime.onMessage.addListener((message, sender) => {
   const type = (message && message.type) || "";
   if (type === "svb:status") return onStatus();
@@ -176,6 +234,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (type === "svb:fill") return onFill(message, sender);
   if (type === "svb:set-port") return onSetPort(message);
   if (type === "svb:open-vault") return onOpenVault();
+  if (type === "svb:tab-probe") return onTabProbe(message);
+  if (type === "svb:tab-fill") return onTabFill(message);
   return undefined;
 });
 
@@ -185,7 +245,10 @@ browser.commands.onCommand.addListener(async (command) => {
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   const tab = tabs && tabs[0];
   if (!tab || !tab.id) return;
-  browser.tabs.sendMessage(tab.id, { type: "svb:fill-first" }).catch(() => {});
+  const probe = await ensureContent(tab.id);
+  if (probe && probe.ok) {
+    await browser.tabs.sendMessage(tab.id, { type: "svb:fill-first" }).catch(() => {});
+  }
 });
 
 // Deliberately no `tabs.onUpdated` badge refresh: every bridge call lands in the vault's access

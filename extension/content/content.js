@@ -109,12 +109,18 @@
         otp: otpFieldFor(password, root)
       };
     });
-    if (!forms.length) {
-      // No password box: offer the user-name step on its own (fill user name only).
-      usernameOnlyFields(root).forEach(function (field) {
-        forms.push({ password: null, username: field, otp: null });
-      });
-    }
+    // Offer the user-name step on its own as well. A two-step sign-in asks for the e-mail
+    // first (no password box in the DOM yet), and some sites keep an invisible password box
+    // next to a visible e-mail box; in both cases the visible e-mail box deserves an icon.
+    const paired = new Set(
+      forms.map(function (form) {
+        return form.username;
+      })
+    );
+    usernameOnlyFields(root).forEach(function (field) {
+      if (paired.has(field)) return;
+      forms.push({ password: null, username: field, otp: null });
+    });
     return forms;
   }
 
@@ -365,7 +371,7 @@
 
   /** Ask the background for the entry's fields and write them into the page. */
   async function fillFrom(candidate, field) {
-    if (state.busy) return;
+    if (state.busy) return { ok: false, reason: "busy", text: TEXT.unknown };
     state.busy = true;
     let response = null;
     try {
@@ -381,7 +387,11 @@
         failure.textContent = (response && response.error && response.error.text) || TEXT.unknown;
         panelElement.list.appendChild(failure);
       }
-      return;
+      return {
+        ok: false,
+        reason: "vault",
+        text: (response && response.error && response.error.text) || TEXT.unknown
+      };
     }
     const form = state.forms.find(function (item) {
       return item.password === field || item.username === field || item.otp === field;
@@ -397,6 +407,16 @@
     closePanel();
     showToast(filledUsername || filledPassword ? TEXT.filled : TEXT.filledPartial);
     if (filledOtp) showToast(TEXT.otpFilled, "ok");
+    const parts = [];
+    if (filledUsername) parts.push("username");
+    if (filledPassword) parts.push("password");
+    if (filledOtp) parts.push("otp");
+    return {
+      ok: true,
+      filled: parts.join("+") || "none",
+      reason: parts.length ? "" : "nothing_to_fill",
+      text: parts.length ? "" : TEXT.filledPartial
+    };
   }
 
   /** A short, self-removing toast inside the shadow root. */
@@ -493,6 +513,10 @@
       document.addEventListener("DOMContentLoaded", init);
       return;
     }
+    // The popup injects this script into tabs that were already open (so no icon was there):
+    // running it twice must not double the icons, the observer or the listeners.
+    if (window.__secureVaultBrowserInit) return;
+    window.__secureVaultBrowserInit = true;
     sweep();
     const observer = new MutationObserver(function () {
       scheduleSweep();
@@ -508,16 +532,30 @@
     });
     browser.runtime.onMessage.addListener(function (message) {
       if (!message) return undefined;
+      if (message.type === "svb:ping") {
+        // The popup asks this before it offers an entry: it says whether this tab can be filled.
+        return Promise.resolve({
+          ok: true,
+          host: location.host,
+          forms: state.forms.length,
+          fillable: state.forms.length > 0
+        });
+      }
       if (message.type === "svb:fill-first") {
-        fillFirst();
+        return fillFirst();
       } else if (message.type === "svb:fill-path") {
         // From the popup: fill one specific entry into this page's primary form.
         const primary = state.forms.find(function (item) {
           return item.password;
         }) || state.forms[0];
-        if (primary) {
-          fillFrom({ path: String(message.path || "") }, primary.password || primary.username);
+        if (!primary) {
+          return Promise.resolve({
+            ok: false,
+            reason: "no_form",
+            text: "فیلد ورودی در این صفحه پیدا نشد."
+          });
         }
+        return fillFrom({ path: String(message.path || "") }, primary.password || primary.username);
       }
       return undefined;
     });

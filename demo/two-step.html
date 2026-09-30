@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>ورود دو مرحله‌ای — آزمون</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f1115; color: #e5e7eb; margin: 0; padding: 48px 16px; }
+    .card { max-width: 360px; margin: 0 auto; background: #171a21; padding: 28px 24px 32px; border-radius: 14px; }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    p.sub { color: #9ca3af; font-size: 13px; margin: 0 0 22px; }
+    label { display: block; font-size: 12px; color: #9ca3af; margin: 0 0 6px; }
+    input { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #2c313c; border-radius: 8px;
+            background: #0f1115; color: #e5e7eb; font: inherit; }
+    button { width: 100%; margin-top: 18px; padding: 11px; border: 0; border-radius: 8px; background: #1a73e8;
+             color: #fff; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ورود به سیستم</h1>
+    <p class="sub">از «حساب آزمون» استفاده کنید</p>
+    <form id="step-one" method="post" action="/login">
+      <label for="identifier">ایمیل یا تلفن</label>
+      <!-- The e-mail step of a two-step sign-in: the password box is not rendered yet, ... -->
+      <input id="identifier" name="identifier" type="email" autocomplete="username" />
+      <!-- ... while the password box that does exist is invisible, as on the real pages. -->
+      <input id="pass-hidden" name="password" type="password" autocomplete="current-password" style="display:none" />
+      <button type="submit">بعدی</button>
+    </form>
+    <p id="status" class="sub" style="margin-top: 16px"></p>
+  </div>
+  <script>
+    // Record the values the page saw as *user* edits (input + change), so a test can tell a real
+    // framework-visible fill from a silent value assignment.
+    window.__edits = [];
+    ["identifier", "pass-hidden"].forEach(function (id) {
+      const field = document.getElementById(id);
+      field.addEventListener("input", function () {
+        window.__edits.push(id + ":input");
+        document.getElementById("status").textContent = "آخرین ویرایش: " + id;
+      });
+      field.addEventListener("change", function () {
+        window.__edits.push(id + ":change");
+      });
+    });
+    document.getElementById("step-one").addEventListener("submit", function (event) {
+      event.preventDefault();
+    });
+  </script>
+</body>
+</html>

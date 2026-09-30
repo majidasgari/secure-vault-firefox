@@ -98,22 +98,68 @@ function renderCandidates(response, tab) {
     });
     ui.list.appendChild(entry);
   });
+  renderTabLine(tab);
+}
+
+/** One short line: what the add-on can see in this tab at this moment. */
+async function renderTabLine(tab) {
+  if (!tab || !tab.id) return;
+  let probe = null;
+  try {
+    probe = await browser.runtime.sendMessage({ type: "svb:tab-probe", tabId: tab.id });
+  } catch (error) {
+    probe = null;
+  }
+  const line = document.createElement("div");
+  line.className = "note";
+  if (probe && probe.ok) {
+    line.textContent = probe.forms
+      ? "در این تب " + probe.forms + " فیلد ورود شناسایی شد — آیکن کوچک داخل فیلد را بزن."
+      : "فیلد ورودی در این صفحه پیدا نشد.";
+  } else {
+    line.textContent =
+      (probe && (probe.text || (probe.error && probe.error.text))) ||
+      "این تب در دسترس افزونه نیست؛ صفحه را دوباره بارگذاری کن.";
+  }
+  ui.list.appendChild(line);
+}
+
+/** A result line under the list (the fill is never silent). */
+function showResult(text, kind) {
+  const line = document.createElement("div");
+  line.className = kind === "ok" ? "note" : "error";
+  line.textContent = text;
+  ui.list.appendChild(line);
 }
 
 /** Ask the content script of that tab to fill one entry (it owns the form). */
 async function fillInTab(tab, candidate) {
   if (!tab || !tab.id) return;
   ui.list.classList.add("busy");
+  let answer = null;
   try {
-    await browser.tabs.sendMessage(tab.id, { type: "svb:fill-path", path: candidate.path });
-    window.close();
+    answer = await browser.runtime.sendMessage({
+      type: "svb:tab-fill",
+      tabId: tab.id,
+      path: candidate.path
+    });
   } catch (error) {
-    ui.list.classList.remove("busy");
-    const failure = document.createElement("div");
-    failure.className = "error";
-    failure.textContent = "این صفحه اجازهٔ پر کردن نمی‌دهد؛ از آیکن داخل فیلد استفاده کن.";
-    ui.list.appendChild(failure);
+    answer = null;
   }
+  ui.list.classList.remove("busy");
+  if (answer && answer.ok && answer.filled && answer.filled !== "none") {
+    window.close();
+    return;
+  }
+  if (answer && answer.ok) {
+    showResult("این ورودی چیزی برای پر کردن نداشت.", "error");
+    return;
+  }
+  showResult(
+    (answer && (answer.text || (answer.error && answer.error.text))) ||
+      "ارتباط با این تب برقرار نشد؛ صفحه را دوباره بارگذاری کن (F5).",
+    "error"
+  );
 }
 
 /** Refresh status + list + port field. */
