@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <title>گاوصندوق امن</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="../icons/icon-32.png" alt="" width="20" height="20" />
+      <h1>گاوصندوق امن</h1>
+      <span id="dot" class="dot" title="وضعیت"></span>
+    </header>
+
+    <p id="state" class="state">در حال بررسی…</p>
+    <p id="host" class="host" dir="ltr"></p>
+
+    <div id="list" class="list"></div>
+
+    <div class="row">
+      <label for="port">پورت گاوصندوق</label>
+      <input id="port" type="number" min="1" max="65535" dir="ltr" />
+      <button id="save" type="button">ذخیره</button>
+    </div>
+
+    <div class="row">
+      <button id="open" type="button" class="primary">باز کردن گاوصندوق</button>
+    </div>
+
+    <p class="note">
+      هیچ رمزی در مرورگر ذخیره نمی‌شود. هر بار که نام کاربری یا گذرواژه‌ای به یک صفحه داده
+      شود، در «لاگ دسترسی» گاوصندوق ثبت می‌شود.
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

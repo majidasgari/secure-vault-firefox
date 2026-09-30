@@ -1,0 +1,11 @@
+# Build artifacts: the .xpi is produced by tools/build.sh and never committed.
+dist/
+*.xpi
+
+# AMO API credentials stay outside the repository (tools/amo-sign.py takes --keys PATH).
+.amo-keys
+
+# Python / OS noise
+__pycache__/
+*.pyc
+.DS_Store

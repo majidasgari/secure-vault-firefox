@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "گاوصندوق امن — تکمیل خودکار رمزها",
+  "version": "1.0.1",
+  "description": "نام کاربری و گذرواژه را از «گاوصندوق امن» روی همین رایانه در فرم‌های ورود پر می‌کند — فقط با کلیک، و بدون ذخیرهٔ هیچ رمزی در مرورگر.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "secure-vault-browser@maxv.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": { "required": ["none"] }
+    },
+    "gecko_android": { "strict_min_version": "142.0" }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "گاوصندوق امن",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "background": {
+    "scripts": ["lib/vault-client.js", "lib/totp.js", "background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": false
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["icons/icon-32.png"], "matches": ["<all_urls>"] }
+  ],
+  "commands": {
+    "fill-login": {
+      "suggested_key": { "default": "Alt+Shift+L" },
+      "description": "پر کردن فرم ورود از گاوصندوق امن"
+    }
+  }
+}

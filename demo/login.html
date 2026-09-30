@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ورود — دمو</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px 16px;
+        background: #0b1120;
+        color: #e5e7eb;
+        font-family: Vazirmatn, system-ui, Tahoma, sans-serif;
+        direction: rtl;
+      }
+      form {
+        max-width: 360px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        background: #111c33;
+        border: 1px solid #1f2b45;
+        border-radius: 12px;
+        padding: 20px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 6px;
+      }
+      label {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+      input {
+        background: #0f172a;
+        border: 1px solid #1f2b45;
+        border-radius: 8px;
+        color: #e5e7eb;
+        padding: 10px;
+        font: inherit;
+      }
+      input[type="email"],
+      input[type="password"],
+      input[type="text"] {
+        direction: ltr;
+        text-align: left;
+      }
+      button[type="submit"] {
+        background: #1d4ed8;
+        border: 0;
+        border-radius: 8px;
+        color: #fff;
+        padding: 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      p.hint {
+        margin: 0;
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.9;
+      }
+      #outcome {
+        margin: 12px auto 0;
+        max-width: 360px;
+        color: #86efac;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="login" action="#">
+      <h1>ورود به حساب (صفحهٔ آزمایشی)</h1>
+      <label for="user">نام کاربری</label>
+      <input id="user" name="username" type="email" autocomplete="username" />
+      <label for="pass">گذرواژه</label>
+      <input id="pass" name="password" type="password" autocomplete="current-password" />
+      <label for="otp">کد یکبارمصرف (اختیاری)</label>
+      <input id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
+      <button type="submit">ورود</button>
+      <p class="hint">
+        این صفحه فقط برای آزمایش افزونه است: اگر گاوصندوق امن در حال اجرا باشد، آیکن کوچکی
+        داخل هر فیلد ظاهر می‌شود و با کلیک روی آن می‌توانی ورودی ذخیره‌شده را پر کنی.
+      </p>
+    </form>
+    <p id="outcome"></p>
+    <script>
+      // Record the events a framework would listen to, so the tests can prove the fill is
+      // seen as a *user* edit (input + change) and not as a silent value assignment.
+      window.__events = { user: 0, pass: 0, otp: 0, change: 0 };
+      ["user", "pass", "otp"].forEach(function (id) {
+        const field = document.getElementById(id);
+        field.addEventListener("input", function () {
+          window.__events[id] += 1;
+        });
+        field.addEventListener("change", function () {
+          window.__events.change += 1;
+        });
+      });
+      document.getElementById("login").addEventListener("submit", function (event) {
+        event.preventDefault();
+        document.getElementById("outcome").textContent = "ارسال شد: " + document.getElementById("user").value;
+      });
+    </script>
+  </body>
+</html>
