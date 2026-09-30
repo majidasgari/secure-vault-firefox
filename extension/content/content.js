@@ -209,6 +209,7 @@
   let panelElement = null;
   let sweepTimer = 0;
   let pending = false;
+  let retries = 0;
 
   /** Create (once) the Shadow DOM host that holds every icon and the dropdown. */
   function ensureRoot() {
@@ -448,6 +449,16 @@
     if (!document.body) return;
     const forms = findLoginForms(document);
     state.forms = forms;
+    // A form can arrive in two steps: the field is already in the DOM but invisible (an entrance
+    // animation), and only later becomes usable — with no insertion for the observer to see. Keep
+    // re-checking for a while instead of leaving the page without an icon forever.
+    if (!forms.length && retries < 10) {
+      retries += 1;
+      window.clearTimeout(sweepTimer);
+      sweepTimer = window.setTimeout(sweep, 400);
+    } else if (forms.length) {
+      retries = 0;
+    }
     const seen = new Set();
     const shadow = forms.length ? ensureRoot() : null;
     forms.forEach(function (form) {
@@ -521,7 +532,14 @@
     const observer = new MutationObserver(function () {
       scheduleSweep();
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    // Attributes matter as much as insertions: a class or a style change is how pages reveal a
+    // form that was already in the DOM (and how they hide it again).
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "hidden", "type", "autocomplete", "disabled", "readonly"]
+    });
     window.addEventListener("scroll", reposition, { passive: true, capture: true });
     window.addEventListener("resize", reposition, { passive: true });
     document.addEventListener("click", function (event) {
@@ -534,6 +552,7 @@
       if (!message) return undefined;
       if (message.type === "svb:ping") {
         // The popup asks this before it offers an entry: it says whether this tab can be filled.
+        sweep();
         return Promise.resolve({
           ok: true,
           host: location.host,
@@ -545,6 +564,8 @@
         return fillFirst();
       } else if (message.type === "svb:fill-path") {
         // From the popup: fill one specific entry into this page's primary form.
+        // Look again before giving up: the form may have appeared since the last sweep.
+        if (!state.forms.length) sweep();
         const primary = state.forms.find(function (item) {
           return item.password;
         }) || state.forms[0];

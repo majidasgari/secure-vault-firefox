@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>فرم دیرهنگام — آزمون</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f1115; color: #e5e7eb; margin: 0; padding: 48px 16px; }
+    .card { max-width: 360px; margin: 0 auto; background: #171a21; padding: 28px 24px 32px; border-radius: 14px; }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    label { display: block; font-size: 12px; color: #9ca3af; margin: 0 0 6px; }
+    /* The form is in the DOM from the start, but not usable until the card fades in. */
+    form { visibility: hidden; opacity: 0; transition: opacity .25s ease; }
+    form.ready { visibility: visible; opacity: 1; }
+    input { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #2c313c; border-radius: 8px;
+            background: #0f1115; color: #e5e7eb; font: inherit; }
+    button { width: 100%; margin-top: 18px; padding: 11px; border: 0; border-radius: 8px; background: #1a73e8;
+             color: #fff; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ورود به سیستم</h1>
+    <form id="late-form" method="post" action="/login">
+      <label for="email-late">ایمیل یا تلفن</label>
+      <input id="email-late" name="email" type="email" autocomplete="username" />
+      <input id="pass-late" name="password" type="password" autocomplete="current-password" />
+      <button type="submit">بعدی</button>
+    </form>
+  </div>
+  <script>
+    // Nothing is ever inserted: the form is simply revealed by a class change, which is exactly how
+    // the real sign-in cards appear. The flag proves it to the test.
+    window.__inserted = false;
+    window.setTimeout(function () {
+      document.getElementById("late-form").className = "ready";
+      window.__fadedAt = Date.now();
+    }, 1500);
+  </script>
+</body>
+</html>

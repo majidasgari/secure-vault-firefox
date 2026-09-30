@@ -121,15 +121,17 @@ async function renderTabLine(tab) {
       (probe && (probe.text || (probe.error && probe.error.text))) ||
       "این تب در دسترس افزونه نیست؛ صفحه را دوباره بارگذاری کن.";
   }
-  ui.list.appendChild(line);
+  ui.list.insertBefore(line, ui.list.firstChild);
+  line.scrollIntoView({ block: "nearest" });
 }
 
-/** A result line under the list (the fill is never silent). */
+/** A result line above the list (the fill is never silent). */
 function showResult(text, kind) {
   const line = document.createElement("div");
   line.className = kind === "ok" ? "note" : "error";
   line.textContent = text;
-  ui.list.appendChild(line);
+  ui.list.insertBefore(line, ui.list.firstChild);
+  line.scrollIntoView({ block: "nearest" });
 }
 
 /** Ask the content script of that tab to fill one entry (it owns the form). */

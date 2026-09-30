@@ -199,6 +199,8 @@ class HarnessServer(http.server.SimpleHTTPRequestHandler):
             )
         elif name == "two-step.html":
             page = (DEMO / "two-step.html").read_text(encoding="utf-8")
+        elif name == "fade-in.html":
+            page = (DEMO / "fade-in.html").read_text(encoding="utf-8")
         else:
             page = (DEMO / "login.html").read_text(encoding="utf-8")
         scripts = "\n".join(
@@ -498,6 +500,23 @@ def run_scenario(cdp: Cdp, checks: Checks, harness_base: str, session: object, b
         cdp.evaluate("document.getElementById('identifier').value"),
         "",
     )
+
+    # 6d. A form that only fades in (no insertion at all) must still get its icon: pages reveal
+    # their sign-in card by toggling a class, and a sweep that only watches insertions never looks
+    # again — the field stays invisible to the add-on and a click looks like nothing happened.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/fade-in.html"})
+    ready = cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    checks.check("the fade-in page loaded", ready)
+    checks.check(
+        "the form was revealed without any DOM insertion",
+        cdp.evaluate("window.__inserted === false") is True,
+    )
+    appeared = cdp.wait_for("window.__probe.icons().length === 1", timeout=8)
+    checks.check("a form that only fades in still gets its icon", appeared)
+    late_answer = json.loads(
+        cdp.evaluate('(async () => JSON.stringify(await window.browser.runtime.sendMessage({type: "svb:ping"})))()')
+    )
+    checks.check("the late form is reported as fillable", late_answer.get("fillable") is True, late_answer)
 
     # 6c. A page with no login form says so, instead of offering nothing in silence.
     cdp.send("Page.navigate", {"url": f"{harness_base}/harness/blank.html"})
