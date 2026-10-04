@@ -118,6 +118,91 @@ h1 {
   padding: 6px 2px;
 }
 
+/* The code row under an entry: a quiet toggle, then the digits once it is open. */
+.otp-row {
+  margin-top: -2px;
+  padding: 0 8px 2px;
+}
+
+.otp-toggle {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed #334155;
+  color: #cbd5f5;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.otp-toggle:hover {
+  background: #16233f;
+  border-color: #475569;
+}
+
+.otp-toggle.open {
+  border-style: solid;
+  border-color: #1d4ed8;
+}
+
+.otp-box {
+  border: 1px solid #1f2b45;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #0f172a;
+  padding: 6px 8px 8px;
+}
+
+.otp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The digits themselves: always left-to-right, whatever the interface direction is. */
+.otp-code {
+  direction: ltr;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  color: #e5e7eb;
+  flex: 1;
+}
+
+.otp-left {
+  color: #94a3b8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.otp-copy {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.otp-copy:hover {
+  background: #2563eb;
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #1f2b45;
+  margin: 6px 0 2px;
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  background: #3b82f6;
+}
+
+.otp-status {
+  color: #64748b;
+  font-size: 11px;
+}
+
 .error {
   color: #fca5a5;
   line-height: 1.8;

@@ -112,12 +112,28 @@
   }
 
   /**
+   * Group the digits of a code so it can be read back off the screen.
+   *
+   * Six digits become two triplets (``287 082``), eight two halves, nine three triplets — the same
+   * shape the vault's own viewer shows. This is presentation only: what gets copied or typed is
+   * always ``code``, never this string.
+   */
+  function groupDigits(code) {
+    const text = String(code === undefined || code === null ? "" : code);
+    if (text.length === 6) return text.slice(0, 3) + " " + text.slice(3);
+    if (text.length === 8) return text.slice(0, 4) + " " + text.slice(4);
+    if (text.length === 9) return text.slice(0, 3) + " " + text.slice(3, 6) + " " + text.slice(6);
+    return text;
+  }
+
+  /**
    * Turn a stored OTP value into something to type.
    *
-   * @returns {Promise<{code: string, remaining: number|null, live: boolean}|null>} `live: true`
-   *   when the code was generated from an `otpauth://` URI or a bare base32 secret, `false` when
-   *   the stored value already *was* a code (a backup code — the caller decides what to do with
-   *   it), `null` when the value is not an OTP at all.
+   * @returns {Promise<{code: string, display: string, remaining: number|null, period: number|null,
+   *   live: boolean}|null>} `live: true` when the code was generated from an `otpauth://` URI or a
+   *   bare base32 secret, `false` when the stored value already *was* a code (a backup code — the
+   *   caller decides what to do with it), `null` when the value is not an OTP at all. ``display``
+   *   is the grouped form for reading; a code that was not generated is shown exactly as stored.
    */
   async function valueToCode(value, atSeconds) {
     const text = String(value || "").trim();
@@ -125,17 +141,29 @@
     const descriptor = parseOtpauth(text);
     if (descriptor) {
       const generated = await generateFromDescriptor(descriptor, atSeconds);
-      return { code: generated.code, remaining: generated.remaining, live: true };
+      return {
+        code: generated.code,
+        display: groupDigits(generated.code),
+        remaining: generated.remaining,
+        period: descriptor.period,
+        live: true
+      };
     }
     if (/^\d{4,10}$/.test(text)) {
-      return { code: text, remaining: null, live: false };
+      return { code: text, display: text, remaining: null, period: null, live: false };
     }
     if (looksLikeSecret(text)) {
       const generated = await generateFromDescriptor(
         { secret: text, algorithm: "SHA1", digits: 6, period: 30 },
         atSeconds
       );
-      return { code: generated.code, remaining: generated.remaining, live: true };
+      return {
+        code: generated.code,
+        display: groupDigits(generated.code),
+        remaining: generated.remaining,
+        period: 30,
+        live: true
+      };
     }
     return null;
   }
@@ -144,6 +172,7 @@
     base32Decode: base32Decode,
     parseOtpauth: parseOtpauth,
     looksLikeSecret: looksLikeSecret,
+    groupDigits: groupDigits,
     generateFromDescriptor: generateFromDescriptor,
     valueToCode: valueToCode
   };

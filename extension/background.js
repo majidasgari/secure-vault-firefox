@@ -1,10 +1,15 @@
 /*
  * Background event page: the only place that talks to the vault.
  *
- * The content script and the popup ask for one of five things and never see the vault's token.
+ * The content script and the popup ask for one of seven things and never see the vault's token.
  * The host that a lookup is made for is taken from the *sender's* URL, never from the page, so a
  * script on the page cannot ask for another site's credentials. Filling happens in the frame
  * that asked, and nothing is written to disk but the port and the (revocable) browser token.
+ *
+ * One of those seven is new and worth naming: ``svb:otp`` returns the *current one-time code* of
+ * one entry, so the popup can show it the way the vault's own viewer does. It costs one audited
+ * reveal per entry (not per tick — see `otpValues`), and the value it generates from never leaves
+ * this page: the popup receives the six digits, never the secret behind them.
  */
 "use strict";
 
@@ -21,6 +26,7 @@ const MESSAGE_TEXT = {
   PROVIDER_UNAVAILABLE: "پل مرورگر در گاوصندوق فعال نیست.",
   NO_HOST: "این صفحه آدرس معتبری ندارد.",
   NO_ENTRY: "ورودی‌ای برای این سایت در گاوصندوق نیست.",
+  NO_OTP: "این ورودی کد یکبارمصرفِ خواندنی ندارد.",
   BAD_REQUEST: "درخواست نامعتبر بود.",
   NOT_FOUND: "این ورودی در گاوصندوق پیدا نشد.",
   VAULT_ERROR: "گاوصندوق خطا داد."
@@ -61,6 +67,34 @@ function hostOf(url) {
   }
 }
 
+/**
+ * The OTP values the popup has asked to read, in this page's memory only.
+ *
+ * A code changes every thirty seconds, so a popup that showed a live countdown would otherwise
+ * make one audited reveal per tick. The *value* is therefore kept here for a few minutes (never in
+ * `storage`, never written anywhere) and the code is generated from it on each look, which keeps
+ * the audit log at one row per "show me the code" click. Entries are also dropped when the vault
+ * is locked or the port changes, and the popup forgets them when it closes.
+ */
+const OTP_TTL_MS = 5 * 60 * 1000;
+const otpValues = new Map();
+
+/** Drop every remembered OTP value (lock, port change, popup closed). */
+function forgetOtpValues() {
+  otpValues.clear();
+}
+
+/** One memoised OTP value, but only for the host it was revealed for. */
+function rememberedOtp(path, host) {
+  const held = otpValues.get(path);
+  if (!held) return null;
+  if (held.host !== host || Date.now() - held.at > OTP_TTL_MS) {
+    otpValues.delete(path);
+    return null;
+  }
+  return held;
+}
+
 /** Accept only a bare ASCII hostname (the popup passes one; a page never can). */
 function sanitizeHost(value) {
   const text = String(value || "").trim().toLowerCase();
@@ -89,6 +123,8 @@ function updateBadge(status) {
 async function fetchStatus() {
   await client.configure();
   const status = await client.status();
+  // A locked (or disabled) vault must not keep serving codes from the memo above.
+  if (!status || status.locked || !status.enabled) forgetOtpValues();
   updateBadge(status);
   return status;
 }
@@ -149,10 +185,52 @@ async function onFill(message, sender) {
   }
 }
 
+/** Handler: the live one-time code of one entry (the popup's reading surface, never a fill). */
+async function onOtp(message, sender) {
+  const senderHost = hostOf((sender && sender.url) || (sender && sender.tab && sender.tab.url));
+  const host = senderHost || (sender && sender.tab ? "" : sanitizeHost(message && message.host));
+  if (!host) return failure({ code: "NO_HOST" });
+  const path = String((message && message.path) || "");
+  if (!path) return failure({ code: "NO_ENTRY" });
+  try {
+    await client.configure();
+    let held = rememberedOtp(path, host);
+    if (!held) {
+      // One audited reveal per entry, exactly like a fill — the code is credential material even
+      // when it is only being looked at. The value stays in memory (see `otpValues`).
+      const entry = await client.reveal(path, host);
+      if (!entry.has_otp || !entry.otp) return failure({ code: "NO_OTP" });
+      held = { host: host, value: entry.otp, at: Date.now() };
+      otpValues.set(path, held);
+    }
+    const generated = await SecureVaultTotp.valueToCode(held.value).catch(() => null);
+    if (!generated) return failure({ code: "NO_OTP" });
+    return {
+      ok: true,
+      has_otp: true,
+      code: generated.code,
+      display: generated.display,
+      remaining: generated.remaining,
+      period: generated.period,
+      live: generated.live
+    };
+  } catch (error) {
+    otpValues.delete(path);
+    return failure(error);
+  }
+}
+
+/** Handler: the popup closed — forget every remembered OTP value. */
+async function onOtpForget() {
+  forgetOtpValues();
+  return { ok: true };
+}
+
 /** Handler: the port the user typed in the popup. */
 async function onSetPort(message) {
   await client.configure();
   const port = await client.setPort(message && message.port);
+  forgetOtpValues();
   try {
     const status = await fetchStatus();
     return { ok: true, port: port, status: status };
@@ -232,6 +310,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (type === "svb:status") return onStatus();
   if (type === "svb:candidates") return onCandidates(message, sender);
   if (type === "svb:fill") return onFill(message, sender);
+  if (type === "svb:otp") return onOtp(message, sender);
+  if (type === "svb:otp-forget") return onOtpForget();
   if (type === "svb:set-port") return onSetPort(message);
   if (type === "svb:open-vault") return onOpenVault();
   if (type === "svb:tab-probe") return onTabProbe(message);

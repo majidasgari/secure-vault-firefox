@@ -81,17 +81,31 @@ async function main() {
   const uri = await totp.valueToCode("otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 59);
   equal("otpauth URI is live", uri.live, true);
   equal("otpauth URI code", uri.code, "287082");
+  equal("otpauth URI display is grouped for reading", uri.display, "287 082");
+  equal("otpauth URI period", uri.period, 30);
+  equal("otpauth URI remaining", uri.remaining, 1);
   const bare = await totp.valueToCode("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 59);
   equal("bare base32 secret is live", bare.live, true);
   equal("bare base32 code", bare.code, "287082");
+  equal("bare base32 display is grouped", bare.display, "287 082");
   const pasted = await totp.valueToCode("654321", 59);
   equal("a pasted code is not live", pasted.live, false);
   equal("a pasted code is returned as-is", pasted.code, "654321");
+  equal("a pasted code is never regrouped", pasted.display, "654321");
+  equal("a pasted code has no countdown", pasted.remaining, null);
   equal("an empty placeholder is nothing", await totp.valueToCode("—"), null);
   equal("prose is nothing", await totp.valueToCode("recovery codes in the note below"), null);
   equal("a sentence in capitals is not a secret", totp.looksLikeSecret("RECOVERY CODES HERE"), false);
   equal("six letters are not a secret", totp.looksLikeSecret("ABCDEF"), false);
   equal("a 16-char secret is a secret", totp.looksLikeSecret("JBSWY3DPEHPK3PXP"), true);
+
+  console.log("groupDigits (presentation only)");
+  equal("six digits become two triplets", totp.groupDigits("287082"), "287 082");
+  equal("stripping the space gives the code back", totp.groupDigits("287082").replace(/ /g, ""), "287082");
+  equal("eight digits become two halves", totp.groupDigits("94287082"), "9428 7082");
+  equal("nine digits become three triplets", totp.groupDigits("123456789"), "123 456 789");
+  equal("an unusual length is left alone", totp.groupDigits("12345"), "12345");
+  equal("empty stays empty", totp.groupDigits(""), "");
 
   console.log("");
   console.log(`${checks - failures}/${checks} checks passed`);
