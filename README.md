@@ -1,174 +1,171 @@
-# گاوصندوق امن — تکمیل خودکار رمزها در فایرفاکس
+# Secure Vault — log-in autofill for Firefox
 
-افزونه‌ای برای فایرفاکس که وقتی برنامهٔ **گاوصندوق امن** روی همین رایانه در حال اجراست، نام کاربری و
-گذرواژهٔ ذخیره‌شده در پوشهٔ **رمزها**ی گاوصندوق را داخل فرم‌های ورود وب‌سایت‌ها پر می‌کند.
+Other language: [فارسی](README.fa.md).
 
-فلسفهٔ کار: **هیچ چیز خودکار پر نمی‌شود.** افزونه یک آیکن کوچک داخل فیلدها می‌گذارد؛ فقط وقتی
-خودت روی آن کلیک کنی، فهرست ورودی‌های آن سایت نشان داده می‌شود و با انتخاب یک ورودی، فیلدها پر
-می‌شوند. هر بار که یک گذرواژه از گاوصندوق بیرون داده می‌شود، یک سطر در «لاگ دسترسی» گاوصندوق
-ثبت می‌شود.
+**Firefox add-on for [Secure Vault](https://github.com/majidasgari/secure-vault)** — while the vault app is
+running on this machine, it fills the user name and password stored in the vault's credential folder into
+website login forms.
 
----
+How it thinks: **nothing is filled automatically.** The add-on puts a small icon inside the fields; only when
+you click it does it show the entries for that site, and picking one fills the fields. Every time a password
+leaves the vault, one row is written to the vault's access log.
 
-> **Firefox add-on for [Secure Vault](https://github.com/majidasgari/secure-vault)** — click-to-fill user names, passwords and
-> one-time codes from the vault's credential folder into web forms. Nothing is filled
-> automatically, and every value that leaves the vault is written to its access log.
+## The family — three repositories
 
-## خانوادهٔ گاوصندوق — سه مخزن
+This add-on is one of three clients that work on **one** vault:
 
-این افزونه یکی از سه کلاینتی است که روی **یک** والت کار می‌کنند:
-
-| مخزن | چه چیزی است |
+| repository | what it is |
 | --- | --- |
-| [secure-vault](https://github.com/majidasgari/secure-vault) | خودِ گاوصندوق: قالب ذخیره‌سازی و رمزنگاری، اپ دسکتاپ Qt، رابط وب، پل MCP، سینک دوطرفهٔ S3 و ایمپورت‌کننده‌ها. پل مرورگر و «لاگ دسترسی» هم سمت همین برنامه است (`docs/BROWSER-AUTOFILL.md`). |
-| [secure-vault-android](https://github.com/majidasgari/secure-vault-android) | کلاینت اندروید فقط‌خواندنی (گنجینه): والت را از باکت S3 می‌گیرد و روی گوشی پیمایش، جست‌وجو و کد یکبارمصرف می‌دهد؛ نمی‌نویسد. |
-| **[secure-vault-firefox](https://github.com/majidasgari/secure-vault-firefox)** — همین مخزن | همان افزونه‌ای که در این سند توضیح داده شده؛ با کلیک، ورودی‌های پوشهٔ رمزهای گاوصندوق را داخل فرم‌ها می‌گذارد. |
+| [secure-vault](https://github.com/majidasgari/secure-vault) | The vault itself: the storage format and crypto, the Qt desktop app, the web UI, the MCP bridge, two-way S3 sync and the importers. The browser bridge and the access log live on that side too (`docs/BROWSER-AUTOFILL.md`). |
+| [secure-vault-android](https://github.com/majidasgari/secure-vault-android) | The read-only Android client (Ganjineh): pulls the vault from the S3 bucket and offers browsing, search and one-time codes on the phone; it never writes. |
+| **[secure-vault-firefox](https://github.com/majidasgari/secure-vault-firefox)** — this repository | The add-on documented in this file: on your click it fills the entries of the vault's credential folder into web forms. |
 
-هر سه از یک قالب روی دیسک و یک مدل امنیتی مشترک حرف می‌زنند: افزونه فقط یک توکن محدود
-(فقط `/api/autofill/*`) می‌گیرد و هیچ‌گاه نمی‌تواند چیز دیگری از گاوصندوق بخواند یا بنویسد.
+All three speak one on-disk format and one shared security model: the add-on is given only a narrow token
+(`/api/autofill/*` and nothing else) and can neither read nor write anything else in the vault.
 
-## چه کاری می‌کند
+## What it does
 
-- تشخیص فرم ورود در هر صفحه (نام کاربری، گذرواژه، و در صورت وجود، کد یکبارمصرف).
-- نشان دادن فهرست ورودی‌های همان سایت از پوشهٔ `/رمزها` (عنوان، نشانی، نام کاربری — **بدون گذرواژه**).
-- پر کردن فیلدها با کلیک (نه خودکار)، همراه با رویدادهای `input`/`change` تا چارچوب‌های وب
-  (React/Vue/…) تغییر را ببینند.
-- ساخت کد یکبارمصرف زنده (TOTP) از مقادیر `otpauth://` یا از «بذر» ذخیره‌شده در ورودی.
-- **خواندن کد یکبارمصرف در پاپ‌آپ**: زیر هر ورودی‌ای که کد یکبارمصرف دارد، دکمهٔ «نمایش کد
-  یکبارمصرف» می‌آید؛ با کلیک، کد ۶ رقمی (سه‌سه‌تایی گروه‌بندی‌شده، مثل `287 082`) با شمارش
-  ثانیه، نوار پیشرفت و دکمهٔ «رونوشت» نشان داده می‌شود و هر ۳۰ ثانیه خودش به‌روز می‌شود. تا
-  کلیک نکنی هیچ کدی خوانده نمی‌شود و هر نگاه، یک سطر در «لاگ دسترسی» گاوصندوق می‌گذارد.
-- میان‌بر صفحه‌کلید `Alt+Shift+L` روی صفحهٔ فعال، برای پر کردن اولین ورودی پیشنهادی.
-- پشتیبانی از **ورود دومرحله‌ای**: در صفحه‌ای که فقط ایمیل/نام کاربری را می‌پرسد (و جعبهٔ گذرواژه
-  یا نیست، یا در صفحه هست ولی پنهان است) همان فیلد ایمیل آیکن خودش را می‌گیرد.
-- **فعال‌شدن خودکار**: اگر تبی پیش از نصب افزونه باز بوده باشد، افزونه خودش را به آن تب تزریق
-  می‌کند؛ لازم نیست صفحه را دوباره بارگذاری کنی.
-- **هیچ کلیکی بی‌صدا نمی‌ماند**: اگر صفحه فرم ورود نداشته باشد، هم فهرست داخل فیلد و هم پاپ‌آپ
-  دلیلش را می‌گویند.
+- Detects login forms on any page (user name, password and, where present, the one-time-code field).
+- Shows the entries for that site from the vault's credential folder (title, address, user name — **no
+  password**).
+- Fills the fields on click (never automatically), together with `input`/`change` events so web frameworks
+  (React/Vue/…) see the change.
+- Generates a live one-time code (TOTP) from an `otpauth://` value or from a seed stored in the entry.
+- **Reading a one-time code in the popup:** under every entry that has a code a "show one-time code" button
+  appears; clicking it shows the six-digit code (grouped in threes, like `287 082`) with a seconds countdown,
+  a progress bar and a "copy" button, refreshing itself every 30 seconds. Until you click, no code is read,
+  and every look writes one row to the vault's access log.
+- Keyboard shortcut `Alt+Shift+L` on the active page fills the first suggested entry.
+- **Two-step sign-in support:** on a page that only asks for the e-mail/user name (no password box, or one
+  that is present but hidden) the e-mail field gets the icon as well.
+- **Automatic activation:** if a tab was already open before the add-on was installed, the add-on injects
+  itself into that tab; no page reload is needed.
+- **No click goes silent:** if the page has no login form, both the in-field list and the popup say why.
 
-## پیش‌نیازها
+## Requirements
 
-- فایرفاکس ۱۴۲ یا بالاتر.
-- برنامهٔ گاوصندوق امن روی همین رایانه در حال اجرا و **باز** (قفل‌نشده) باشد. اگر گاوصندوق قفل
-  باشد، افزونه در پاپ‌آپ می‌گوید که باید قفلش را در برنامه باز کنی و هیچ گذرواژه‌ای نمی‌گیرد.
-- سرویس وب داخلی گاوصندوق روشن باشد (پیش‌فرض: روی `127.0.0.1:8788`). اگر درگاه دیگری تنظیم
-  کرده‌ای، همان را در پاپ‌آپ افزونه وارد کن.
+- Firefox 142 or newer.
+- The Secure Vault app running on this machine and **unlocked**. If the vault is locked, the popup says you
+  must unlock it in the app and no password is fetched.
+- The vault's built-in web service switched on (default `127.0.0.1:8788`). If you configured another port,
+  enter it in the popup.
 
-## نصب
+## Installing
 
-**۱) نصب موقت (برای آزمایش):** در فایرفاکس `about:debugging#/runtime/this-firefox` را باز کن →
-«Load Temporary Add-on…» → فایل `extension/manifest.json` را انتخاب کن.
+**1) Temporary (for testing):** in Firefox open `about:debugging#/runtime/this-firefox` → "Load Temporary
+Add-on…" → pick `extension/manifest.json`.
 
-**۲) نصب ماندگار:** بستهٔ امضاشدهٔ `.xpi` را (خروجی `tools/build.sh` و `tools/amo-sign.py`) از
-`about:addons` → چرخ‌دنده → «Install Add-on From File…» نصب کن.
+**2) Permanent:** install the signed `.xpi` (the output of `tools/build.sh` and `tools/amo-sign.py`) from
+`about:addons` → gear → "Install Add-on From File…".
 
-پس از نصب، پاپ‌آپ افزونه را باز کن و اگر «گاوصندوق امن در حال اجرا نیست» دیدی، ابتدا برنامه را
-اجرا کن و در صورت نیاز شمارهٔ درگاه را در همان پاپ‌آپ وارد و ذخیره کن.
+After installing, open the add-on's popup: if you see "Secure Vault is not running", start the app first, and
+if needed enter and save the port in that same popup.
 
-## چگونه کار می‌کند
+## How it works
 
 ```
-[صفحهٔ وب]  --(پیام)-->  [کد پس‌زمینهٔ افزونه]  --(HTTP روی 127.0.0.1)-->  [گاوصندوق]
- فیلدها + آیکن            تشخیص میزبان از آدرس تب        پوشهٔ /رمزها، لاگ دسترسی
+[web page]  --(message)-->  [add-on background]  --(HTTP on 127.0.0.1)-->  [vault]
+fields + icon              host taken from the tab URL      credential folder, access log
 ```
 
-1. **افزونه به گاوصندوق وصل می‌شود** — گاوصندوق روی حلقهٔ محلی (`127.0.0.1`) یک شنوندهٔ HTTP دارد.
-   افزونه با درخواست `POST /api/session/claim` و بدنهٔ `{"scope": "browser"}` یک **توکن اختصاصی
-   مرورگر** می‌گیرد؛ این توکن فقط برای سه فراخوانی `/api/autofill/status|match|reveal` معتبر است و
-   با آن نمی‌توان چیزی در گاوصندوق خواند یا نوشت.
-2. **فهرست ورودی‌ها (فقط فراداده)** — با کلیک روی آیکن، افزونه میزبان صفحه را (از آدرس خود تب، نه
-   از محتوای صفحه) به گاوصندوق می‌فرستد و گاوصندوق ورودی‌های همان میزبان را برمی‌گرداند: عنوان،
-   نشانی، نام کاربری. **گذرواژه در این مرحله هرگز فرستاده نمی‌شود.**
-3. **نمایش گذرواژه (تنها گام حساس)** — با انتخاب یک ورودی از فهرست، افزونه `reveal` را برای همان
-   مسیر و همان میزبان صدا می‌زند؛ گاوصندوق بررسی می‌کند که ورودی زیر پوشهٔ رمزها باشد و به همان
-   میزبان تعلق داشته باشد، بعد فیلدهای آن را برمی‌گرداند و **یک سطر در لاگ دسترسی** با
-   `source=browser` ثبت می‌کند.
-4. **پر کردن** — مقدارها با setter اصلی و رویدادهای `input`/`change` داخل فیلدها نوشته می‌شوند. هیچ
-   مقدار دیگری از گذرواژه در صفحه نمی‌نشیند: نه در ویژگی‌های HTML، نه در حافظهٔ مرورگر.
+1. **The add-on connects to the vault** — the vault has an HTTP listener on the loopback (`127.0.0.1`). The
+   add-on calls `POST /api/session/claim` with `{"scope": "browser"}` and receives a **browser-scoped token**;
+   that token is valid only for the three calls `/api/autofill/status|match|reveal`, and with it nothing else
+   in the vault can be read or written.
+2. **The entry list (metadata only)** — when you click the icon, the add-on sends the page's host (taken from
+   the tab's own URL, not from page content) and the vault returns the entries for that host: title, address,
+   user name. **No password is sent at this stage.**
+3. **Revealing a password (the only sensitive step)** — picking an entry makes the add-on call `reveal` for
+   that path and that host; the vault checks that the entry is under the credential folder and belongs to that
+   host, returns its fields and writes **one row to the access log** with `source=browser`.
+4. **Filling** — the values are written into the fields with the native setter and `input`/`change` events. No
+   other copy of the password lands anywhere on the page: not in HTML attributes, not in browser storage.
 
-## مدل امنیتی (خلاصه)
+## Security model (summary)
 
-- **دسترسی کمینهٔ سمت گاوصندوق:** توکن افزونه فقط به پوشهٔ `/رمزها` دسترسی دارد و فقط برای همان سه
-  فراخوانی معتبر است. هیچ مسیر خواندن/نوشتن دیگری با این توکن باز نمی‌شود.
-- **قفل میزبان:** ورودی‌ای که به میزبان صفحه تعلق نداشته باشد تحویل داده نمی‌شود؛ سایت دیگری
-  نمی‌تواند ورودی‌های سایت تو را بخواهد.
-- **بدون پر کردن خودکار:** پر شدن فقط با کلیک کاربر رخ می‌دهد. آیکن و فهرست داخل یک Shadow DOM
-  بسته ساخته می‌شوند تا اسکریپت صفحه نتواند خودش روی گزینه‌ها کلیک کند.
-- **حسابرسی کامل:** هر reveal یک سطر در «لاگ دسترسی» گاوصندوق می‌گذارد (میزبان، مسیر ورودی، زمان).
-  فهرست‌گرفتن و اسکن ایندکس لاگ را پر نمی‌کند — فقط بیرون‌دادن واقعی گذرواژه لاگ می‌شود.
-- **سقف نرخ:** تعداد reveal در هر دقیقه در سمت گاوصندوق سقف دارد؛ فراتر از آن موقتاً رد می‌شود.
-- **کد یکبارمصرف و پاپ‌آپ:** کد همچنان در کد پس‌زمینهٔ افزونه ساخته می‌شود و پاپ‌آپ فقط شش رقم را
-  می‌گیرد — بذر (مقدار `otpauth://`) هرگز به صفحهٔ پاپ‌آپ نمی‌رسد. هر «نمایش کد» یک reveal
-  حسابرسی‌شده است، مثل پر کردن؛ ولی برای اینکه شمارش ثانیه به یک خواندن در هر ثانیه تبدیل نشود،
-  مقدار بذر پس از اولین نگاه فقط **در حافظهٔ همان صفحهٔ پس‌زمینه** و حداکثر پنج دقیقه نگه داشته
-  می‌شود (با بستن پاپ‌آپ، با قفل شدن گاوصندوق و با تغییر پورت پاک می‌شود). «رونوشت» فقط خود شش رقمِ
-  بی‌فاصله را می‌گذارد، نه شکل گروه‌بندی‌شدهٔ روی صفحه.
-- **کلید خاموش:** در برنامهٔ گاوصندوق → تنظیمات → رابط وب → «تکمیل خودکار رمزها در مرورگر» را
-  می‌توانی خاموش کنی؛ از آن لحظه هیچ فراخوانی مرورگری پاسخ نمی‌گیرد.
-- **آنچه افزونه ذخیره می‌کند:** فقط شمارهٔ درگاه و همان توکن قابل‌ابطال. هیچ گذرواژه‌ای در حافظهٔ
-  افزونه یا مرورگر نوشته نمی‌شود.
+- **Minimal reach on the vault side:** the add-on's token reaches only the credential folder and is valid only
+  for those three calls. No other read/write route opens with it.
+- **Host lock:** an entry that does not belong to the page's host is never handed over; another site cannot
+  ask for your entries.
+- **No automatic filling:** filling happens only on a user click. The icon and the list are built inside a
+  closed Shadow DOM, so page scripts cannot click the options themselves.
+- **Full audit:** every reveal writes one row to the vault's access log (host, entry path, time). Listing and
+  index scans do not fill the log — only a password actually leaving the vault is logged.
+- **Rate cap:** reveals per minute are capped on the vault side; beyond that they are temporarily refused.
+- **One-time codes and the popup:** the code is still generated in the add-on's background page and the popup
+  receives only the six digits — the seed (the `otpauth://` value) never reaches the popup page. Every "show
+  code" is an audited reveal, just like filling; but so that the countdown does not become one vault read per
+  second, the seed is kept after the first look **only in the memory of that background page**, for at most
+  five minutes (cleared when the popup closes, when the vault locks and when the port changes). "Copy" puts
+  only the six unformatted digits on the clipboard, not the grouped form shown on screen.
+- **Off switch:** in the vault app → Settings → Web UI → "browser autofill" can be turned off; from that
+  moment no browser call is answered.
+- **What the add-on stores:** only the port number and that one revocable token. No password is written to the
+  add-on's memory or the browser's storage.
 
-## آزمون‌ها
+## Tests
 
 ```bash
-# ۱) منطق کد یکبارمصرف (بردارهای استاندارد RFC 6238) — بدون وابستگی:
+# 1) one-time-code logic (the standard RFC 6238 vectors) — no dependencies:
 node tests/totp_test.js
 
-# ۲) آزمون سرتاسری در مرورگر واقعی: یک گاوصندوق آزمایشی ساخته می‌شود، کد افزونه داخل
-#    کروم هدلس بارگذاری می‌شود و کلیک‌ها با رویدادهای واقعی ماوس انجام می‌شوند.
+# 2) end-to-end test in a real browser: a scratch vault is built, the add-on's code is loaded
+#    into headless Chrome and the clicks are performed with real mouse events.
 cd ../secure-vault && ./.venv/bin/python ../secure-vault-browser/tests/probe.py
 ```
 
-آزمون دوم (۸۰ بررسی) این‌ها را می‌سنجد: پیش از کلیک هیچ فیلدی پر نمی‌شود؛ آیکن داخل فیلد می‌نشیند؛
-فهرست ورودی درست را نشان می‌دهد؛ پس از کلیک، نام کاربری/گذرواژه/کد یکبارمصرف در فیلدها نوشته
-می‌شوند؛ گذرواژه در هیچ‌جای صفحه جز مقدار فیلد پیدا نمی‌شود؛ میزبان دیگر هیچ ورودی‌ای نمی‌گیرد؛
-صفحهٔ **دومرحله‌ای** (ایمیل + جعبهٔ گذرواژهٔ پنهان) آیکن روی ایمیل می‌گیرد و جعبهٔ پنهان دست‌نخورده
-می‌ماند؛ صفحهٔ **بی‌فرم** صریحاً می‌گوید فیلدی ندارد؛ گاوصندوق قدیمی (بی‌پل) درست شناسایی و پیام
-مناسب داده می‌شود و توکن کل گاوصندوقش ذخیره نمی‌شود؛ و در لاگ گاوصندوق دقیقاً سه سطر reveal با
-`source=browser` ثبت شده است.
+The second test (80 checks) verifies: no field is filled before a click; the icon sits inside the field; the
+entry list shows the right entries; after the click the user name/password/one-time code are written into the
+fields; the password is found nowhere on the page except as the field value; another host gets no entry at
+all; a **two-step** page (e-mail + hidden password box) gets the icon on the e-mail and leaves the hidden box
+untouched; a **formless** page says explicitly that it has no field; an old (pre-bridge) vault is detected
+correctly, is given the right message, and its whole-vault token is not stored; and exactly three reveal rows
+with `source=browser` are recorded in the vault's log.
 
-از نگارش ۱٫۱٫۰ این‌ها هم سنجیده می‌شوند: پیش از کلیک هیچ کدی خوانده نمی‌شود؛ کدِ خوانده‌شده با
-محاسبهٔ مستقل RFC 6238 در پایتون مو‌به‌مو یکی است؛ شکل گروه‌بندی‌شده روی صفحه با شش رقم بی‌فاصلهٔ
-کلیپ‌بورد یکی است؛ شمارش ثانیه و نوار پیشرفت می‌آیند؛ نگاه دوم در همان دقیقه **بدون** خواندن دوبارهٔ
-گاوصندوق جواب می‌گیرد؛ و پس از «فراموش‌کردن» (بستن پاپ‌آپ) دوباره از گاوصندوق خوانده می‌شود.
+Since version 1.1.0 these are checked as well: no code is read before a click; the code that was read matches
+an independent RFC 6238 computation in Python exactly; the grouped form on screen matches the six unformatted
+digits on the clipboard; the seconds countdown and the progress bar appear; a second look within the same
+minute is answered **without** re-reading the vault; and after "forget" (closing the popup) the vault is read
+again.
 
-## ساخت و امضا
+## Building and signing
 
 ```bash
-tools/build.sh          # بستهٔ .xpi در dist/
-tools/amo-sign.py       # امضا با حساب Mozilla (کلیدها در .amo-keys) → dist/signed/
+tools/build.sh          # the .xpi package in dist/
+tools/amo-sign.py       # sign with a Mozilla account (keys in .amo-keys) → dist/signed/
 ```
 
-## ساختار مخزن
+## Repository layout
 
 ```
 extension/
-  manifest.json          نگارش ۳، فایرفاکس ۱۴۲+
-  background.js          تنها جایی که با گاوصندوق حرف می‌زند؛ مسیریابی پیام‌ها و نشان وضعیت
-  lib/vault-client.js    کارخواه پل مرورگر: claim، status، match، reveal (+ کشف درگاه)
-  lib/totp.js            کد یکبارمصرف (RFC 6238) از otpauth:// یا بذر base32
-  content/content.js     تشخیص فرم، آیکن داخل فیلد، فهرست، پر کردن
-  popup/                 وضعیت، فهرست ورودی‌های تب جاری، کد یکبارمصرف، تنظیم درگاه
-  icons/                 آیکن‌ها (ساخته‌شده با tools/make_icons.py)
-tools/                   ساخت آیکن، ساخت بسته، امضا
-tests/                   آزمون واحد TOTP + آزمون سرتاسری مرورگر واقعی
-demo/login.html          صفحهٔ ورود نمونه برای آزمایش دستی
-demo/two-step.html       صفحهٔ ورود دومرحله‌ای نمونه (ایمیل + جعبهٔ گذرواژهٔ پنهان)
+  manifest.json          version 3, Firefox 142+
+  background.js          the only place that talks to the vault; message routing and the status badge
+  lib/vault-client.js    the browser-bridge client: claim, status, match, reveal (+ port discovery)
+  lib/totp.js            one-time code (RFC 6238) from otpauth:// or a base32 seed
+  content/content.js     form detection, the in-field icon, the list, filling
+  popup/                 status, the current tab's entries, one-time code, port setting
+  icons/                 icons (generated by tools/make_icons.py)
+tools/                   icon generation, packaging, signing
+tests/                   TOTP unit test + real-browser end-to-end test
+demo/login.html          sample login page for manual testing
+demo/two-step.html       sample two-step page (e-mail + hidden password box)
 ```
 
-## رفع اشکال
+## Troubleshooting
 
-| نشانه | علت و راه‌حل |
+| symptom | cause and fix |
 | --- | --- |
-| پاپ‌آپ: «گاوصندوق امن در حال اجرا نیست» | برنامه اجرا نیست یا سرویس وبش خاموش است؛ برنامه را باز کن. |
-| پاپ‌آپ: «گاوصندوق امن قفل است» | قفل را در برنامه باز کن. |
-| پاپ‌آپ: «تکمیل خودکار مرورگر در گاوصندوق خاموش است» | کلید خاموش در تنظیمات گاوصندوق روشن است. |
-| آیکن داخل فیلد نمی‌آید | پاپ‌آپ را باز کن: یک سطر می‌گوید «در این تب N فیلد ورود شناسایی شد» یا «فیلد ورودی در این صفحه پیدا نشد». اگر «پیدا نشد» دیدی، افزونه در آن صفحه فرمی نمی‌بیند (برخی صفحه‌ها فیلد را دیر می‌سازند یا داخل iframe می‌گذارند)؛ یک‌بار صفحه را دوباره بار کن. |
-| روی ورودی‌های پاپ‌آپ کلیک می‌کنم و هیچ نمی‌شود | پاپ‌آپ زیر فهرست می‌نویسد چه شد (مثلاً «فیلد ورودی در این صفحه پیدا نشد»). اگر نوشت «این تب در دسترس افزونه نیست»، صفحه محدود است (مثل `about:` یا صفحهٔ خود فایرفاکس) و افزونه اجازهٔ اجرا ندارد. |
-| آیکن روی ایمیل نمی‌آید ولی فرم دو مرحله‌ای است | از نگارش ۱٬۰٬۲ فیلد ایمیل/نام کاربری حتی وقتی جعبهٔ گذرواژه هم در صفحه باشد آیکن می‌گیرد؛ اگر باز هم نیامد، صفحه را دوباره بار کن. |
-| «این ورودی مربوط به این سایت نیست» | ورودی به میزبان دیگری تعلق دارد؛ در گاوصندوق فیلد «سایت» یا «آدرس» آن ورودی را اصلاح کن. |
-| دکمهٔ «نمایش کد یکبارمصرف» نیست | آن ورودی فیلد کد یکبارمصرف ندارد؛ در گاوصندوق مقدار `otpauth://…` یا بذر base32 را در فیلد «کد یکبارمصرف» ورودی بگذار. |
-| کد یکبارمصرف می‌آید ولی سایت قبولش نمی‌کند | ساعت رایانه با سرور اختلاف دارد؛ ساعت سیستم را هم‌گام کن (کد از ساعت همین رایانه ساخته می‌شود). |
-| «این ورودی کد یکبارمصرفِ خواندنی ندارد» | مقدار آن فیلد نه `otpauth://` است، نه بذر base32 و نه یک کد عددی؛ متن نامفهوم را از فیلد «کد یکبارمصرف» بردار. |
-| «تعداد درخواست‌ها زیاد شد» | سقف reveal در یک دقیقه پر شده؛ چند لحظه صبر کن. |
-| درگاه گاوصندوق را عوض کرده‌ام | شمارهٔ تازه را در پاپ‌آپ بنویس و ذخیره کن. |
+| popup: "Secure Vault is not running" | the app is not running, or its web service is off; start the app. |
+| popup: "Secure Vault is locked" | unlock it in the app. |
+| popup: "browser autofill is turned off in the vault" | the off switch in the vault's settings is on. |
+| the icon does not appear in the field | open the popup: one row says "N login fields detected in this tab" or "no login field found on this page". If it says "not found", the add-on sees no form on that page (some pages build the field late or put it in an iframe); reload the page once. |
+| I click the popup's entries and nothing happens | the popup writes what happened underneath the list (e.g. "no login field found on this page"). If it says "this tab is not available to the add-on", the page is restricted (`about:` or Firefox's own pages) and the add-on is not allowed to run there. |
+| the icon does not appear on the e-mail field but the form is two-step | since version 1.0.2 the e-mail/user-name field gets the icon even when a password box is on the page too; if it still does not, reload the page. |
+| "this entry does not belong to this site" | the entry belongs to another host; fix its "site" or "address" field in the vault. |
+| there is no "show one-time code" button | that entry has no one-time-code field; put the `otpauth://…` value or a base32 seed in the entry's "one-time code" field in the vault. |
+| the one-time code appears but the site rejects it | the computer's clock differs from the server's; sync the system clock (the code is generated from this machine's clock). |
+| "this entry has no readable one-time code" | that field's value is neither `otpauth://`, nor a base32 seed, nor a numeric code; remove the unrecognisable text from the "one-time code" field. |
+| "too many requests" | the per-minute reveal cap is full; wait a moment. |
+| I changed the vault's port | enter the new number in the popup and save it. |
+
