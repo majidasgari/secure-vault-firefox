@@ -10,6 +10,23 @@
 
 ---
 
+> **Firefox add-on for [Secure Vault](https://github.com/majidasgari/secure-vault)** — click-to-fill user names, passwords and
+> one-time codes from the vault's credential folder into web forms. Nothing is filled
+> automatically, and every value that leaves the vault is written to its access log.
+
+## خانوادهٔ گاوصندوق — سه مخزن
+
+این افزونه یکی از سه کلاینتی است که روی **یک** والت کار می‌کنند:
+
+| مخزن | چه چیزی است |
+| --- | --- |
+| [secure-vault](https://github.com/majidasgari/secure-vault) | خودِ گاوصندوق: قالب ذخیره‌سازی و رمزنگاری، اپ دسکتاپ Qt، رابط وب، پل MCP، سینک دوطرفهٔ S3 و ایمپورت‌کننده‌ها. پل مرورگر و «لاگ دسترسی» هم سمت همین برنامه است (`docs/BROWSER-AUTOFILL.md`). |
+| [secure-vault-android](https://github.com/majidasgari/secure-vault-android) | کلاینت اندروید فقط‌خواندنی (گنجینه): والت را از باکت S3 می‌گیرد و روی گوشی پیمایش، جست‌وجو و کد یکبارمصرف می‌دهد؛ نمی‌نویسد. |
+| **[secure-vault-firefox](https://github.com/majidasgari/secure-vault-firefox)** — همین مخزن | همان افزونه‌ای که در این سند توضیح داده شده؛ با کلیک، ورودی‌های پوشهٔ رمزهای گاوصندوق را داخل فرم‌ها می‌گذارد. |
+
+هر سه از یک قالب روی دیسک و یک مدل امنیتی مشترک حرف می‌زنند: افزونه فقط یک توکن محدود
+(فقط `/api/autofill/*`) می‌گیرد و هیچ‌گاه نمی‌تواند چیز دیگری از گاوصندوق بخواند یا بنویسد.
+
 ## چه کاری می‌کند
 
 - تشخیص فرم ورود در هر صفحه (نام کاربری، گذرواژه، و در صورت وجود، کد یکبارمصرف).
