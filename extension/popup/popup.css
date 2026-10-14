@@ -266,6 +266,41 @@ button.primary:hover {
   line-height: 1.9;
 }
 
+/* The «never for this site» switch the save prompt writes: it can be undone here. */
+.saving {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #16233c;
+  border: 1px solid #24324e;
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.8;
+  text-align: right;
+}
+
+.saving span {
+  flex: 1;
+}
+
+.saving button {
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #cbd5f5;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.saving[hidden] {
+  display: none;
+}
+
 .busy {
   opacity: 0.6;
   pointer-events: none;

@@ -76,6 +76,12 @@
         if (message.type === "svb:tab-probe") {
           return Promise.resolve({ ok: true, host: "127.0.0.1", forms: 1, fillable: true });
         }
+        if (message.type === "svb:save-prefs") {
+          // `?ignored=1` plays the state «هرگز برای این سایت» leaves behind, so the popup's
+          // undo line can be checked without a browser profile that actually ignored anything.
+          const ignored = new URLSearchParams(window.location.search).get("ignored") === "1";
+          return Promise.resolve({ ok: true, host: message.host, offer: true, ignored: ignored });
+        }
         return Promise.resolve({ ok: true });
       }
     },

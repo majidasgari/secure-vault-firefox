@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "گاوصندوق امن — تکمیل خودکار رمزها",
-  "version": "1.1.0",
-  "description": "نام کاربری و گذرواژه را از «گاوصندوق امن» روی همین رایانه در فرم‌های ورود پر می‌کند — فقط با کلیک، و بدون ذخیرهٔ هیچ رمزی در مرورگر.",
+  "version": "1.2.0",
+  "description": "نام کاربری و گذرواژه را از «گاوصندوق امن» پر می‌کند و پس از یک ورود موفق، ذخیرهٔ گذرواژهٔ تازه یا تغییرکرده را پیشنهاد می‌دهد.",
   "browser_specific_settings": {
     "gecko": {
       "id": "secure-vault-browser@maxv.local",
@@ -30,12 +30,12 @@
     }
   },
   "background": {
-    "scripts": ["lib/vault-client.js", "lib/totp.js", "background.js"]
+    "scripts": ["lib/browser-compat.js", "lib/vault-client.js", "lib/totp.js", "background.js"]
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
+      "js": ["lib/browser-compat.js", "content/content.js"],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": false

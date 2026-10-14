@@ -5,11 +5,13 @@
  * http://127.0.0.1:8788/). A browser cannot read the vault's token files — that is why the
  * server hands a *separate*, deliberately narrow token to a loopback client that asks for it
  * with `X-Vault-Claim: 1` (POST /api/session/claim, scope "browser"). That token is only valid
- * for `/api/autofill/*`, whose three calls are: status, match (metadata only) and reveal (the
- * fields of one already-matched entry, always audited in the vault).
+ * for `/api/autofill/*`, whose five calls are: status, match (metadata only), reveal (the fields
+ * of one already-matched entry, always audited in the vault), save-check (what saving a typed
+ * credential would mean: new / changed / same) and save (store it — the vault picks the entry,
+ * never this client).
  *
  * This file holds no credential and never stores one: it returns what the vault answers and
- * nothing is written to disk except the port and the token.
+ * nothing is written to disk except the port, the token and the add-on's own preferences.
  */
 (function (global) {
   "use strict";
@@ -212,6 +214,42 @@
       return this.call("/api/autofill/reveal", {
         method: "POST",
         body: { path: path, host: host || "" }
+      });
+    }
+
+    /**
+     * What saving one typed credential would mean — `new`, `changed` or `same`.
+     *
+     * The credential goes *in* (the vault compares it and never sends one back), and nothing is
+     * written: this is the call that lets the add-on stay quiet when the vault already holds
+     * exactly this password.
+     */
+    async saveCheck(host, url, username, password, title) {
+      return this.call("/api/autofill/save-check", {
+        method: "POST",
+        body: {
+          host: host || "",
+          url: url || "",
+          username: username || "",
+          password: password || "",
+          title: title || ""
+        }
+      });
+    }
+
+    /** Store one typed credential; `path` is a hint the vault re-validates against the host. */
+    async save(host, fields) {
+      const data = fields || {};
+      return this.call("/api/autofill/save", {
+        method: "POST",
+        body: {
+          host: host || "",
+          url: data.url || "",
+          username: data.username || "",
+          password: data.password || "",
+          title: data.title || "",
+          path: data.path || ""
+        }
       });
     }
   }

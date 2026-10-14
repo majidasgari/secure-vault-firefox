@@ -41,6 +41,12 @@ All three speak one on-disk format and one shared security model: the add-on is 
 - **Automatic activation:** if a tab was already open before the add-on was installed, the add-on injects
   itself into that tab; no page reload is needed.
 - **No click goes silent:** if the page has no login form, both the in-field list and the popup say why.
+- **Saving a password after a successful sign-in:** if you typed a `user name + password` by hand and the
+  page moved on to a signed-in view, a small bar appears — **save / not now / never for this site**. The vault
+  answers what saving would mean first: a credential the vault already holds exactly (`same`) shows nothing at
+  all, a *changed* password for an entry the vault knows offers "update the password", and an unknown user name
+  offers "save as a new entry". Nothing is written before you click save, and the add-on never saves the
+  password *it* filled in for you.
 
 ## Requirements
 
@@ -70,8 +76,8 @@ fields + icon              host taken from the tab URL      credential folder, a
 
 1. **The add-on connects to the vault** — the vault has an HTTP listener on the loopback (`127.0.0.1`). The
    add-on calls `POST /api/session/claim` with `{"scope": "browser"}` and receives a **browser-scoped token**;
-   that token is valid only for the three calls `/api/autofill/status|match|reveal`, and with it nothing else
-   in the vault can be read or written.
+   that token is valid only for the five calls `/api/autofill/status|match|reveal|save-check|save`, and with it
+   nothing else in the vault can be read or written.
 2. **The entry list (metadata only)** — when you click the icon, the add-on sends the page's host (taken from
    the tab's own URL, not from page content) and the vault returns the entries for that host: title, address,
    user name. **No password is sent at this stage.**
@@ -80,11 +86,23 @@ fields + icon              host taken from the tab URL      credential folder, a
    host, returns its fields and writes **one row to the access log** with `source=browser`.
 4. **Filling** — the values are written into the fields with the native setter and `input`/`change` events. No
    other copy of the password lands anywhere on the page: not in HTML attributes, not in browser storage.
+5. **Saving (the only write)** — the content script watches the login form's submit and hands what you typed to
+   the add-on's background page (the one place a password crosses a boundary inside the add-on; it is kept in
+   memory for at most five minutes and never written to storage). When the page has moved past its login form
+   the add-on asks `save-check`: the vault compares the typed credential with the entry that host and user name
+   belong to and answers `new` / `changed` / `same` — the password goes in, nothing comes back. Only after you
+   click *save* does the add-on call `save`, and even then the add-on names no destination: the vault picks the
+   entry (rewriting the one `گذرواژه:` line of that entry, or creating a new `secretfile` in the browser
+   category of the credential folder) and records the write with `source=browser`.
 
 ## Security model (summary)
 
 - **Minimal reach on the vault side:** the add-on's token reaches only the credential folder and is valid only
-  for those three calls. No other read/write route opens with it.
+  for those five calls. The two save calls are the bridge's whole write surface: `save-check` writes nothing,
+  and `save` can only ever rewrite the password line of one credential of the page's own host or create a new
+  `secretfile` in the credential folder (it never takes a destination from the add-on, and it refuses a path
+  outside the folder or one that belongs to another host). Saving is also refused from anywhere but this
+  machine, even for a client holding the token.
 - **Host lock:** an entry that does not belong to the page's host is never handed over; another site cannot
   ask for your entries.
 - **No automatic filling:** filling happens only on a user click. The icon and the list are built inside a
@@ -99,9 +117,13 @@ fields + icon              host taken from the tab URL      credential folder, a
   five minutes (cleared when the popup closes, when the vault locks and when the port changes). "Copy" puts
   only the six unformatted digits on the clipboard, not the grouped form shown on screen.
 - **Off switch:** in the vault app → Settings → Web UI → "browser autofill" can be turned off; from that
-  moment no browser call is answered.
-- **What the add-on stores:** only the port number and that one revocable token. No password is written to the
-  add-on's memory or the browser's storage.
+  moment no browser call is answered. Two separate switches cover saving: the vault's own *"offer to save
+  passwords from the browser"* (off = the add-on is never even told there is something to offer) and, per site,
+  the *"never for this site"* button on the bar itself — undoable from the add-on's popup.
+- **What the add-on stores:** only the port number, that one revocable token and the list of sites you told it
+  never to offer saving for. A password you typed is never written to the browser's storage: it lives in the
+  background page's memory for at most five minutes, and it is dropped the moment you answer the bar, close the
+  tab, or the vault turns out to hold that password already.
 
 ## Tests
 
@@ -114,7 +136,7 @@ node tests/totp_test.js
 cd ../secure-vault && ./.venv/bin/python ../secure-vault-browser/tests/probe.py
 ```
 
-The second test (80 checks) verifies: no field is filled before a click; the icon sits inside the field; the
+The second test (124 checks) verifies: no field is filled before a click; the icon sits inside the field; the
 entry list shows the right entries; after the click the user name/password/one-time code are written into the
 fields; the password is found nowhere on the page except as the field value; another host gets no entry at
 all; a **two-step** page (e-mail + hidden password box) gets the icon on the e-mail and leaves the hidden box
@@ -127,6 +149,16 @@ an independent RFC 6238 computation in Python exactly; the grouped form on scree
 digits on the clipboard; the seconds countdown and the progress bar appear; a second look within the same
 minute is answered **without** re-reading the vault; and after "forget" (closing the popup) the vault is read
 again.
+
+Since version 1.2.0 the save flow is checked end to end, in the browser and in the vault: a sign-in that moves
+past its login form (the SPA shape) offers **update** for a user name the vault knows and **save** for one it
+does not; the bar carries save / later / never; the typed credential crosses to the add-on's background
+**exactly once** and lands nowhere in storage; nothing is written before the user clicks save; the vault's
+entry is rewritten in place (its other fields and the notes survive) or a new `secretfile` appears in the
+browser category with its file and folder notes; a sign-in the site **rejects** offers nothing and the vault is
+never even asked; a password the vault itself **filled** is never offered; and the popup's undo for "never for
+this site" appears and goes away. The vault's own `tests/run_tests.py --only browser_autofill` covers the
+bridge rules behind all of that (53 tests).
 
 ## Building and signing
 

@@ -17,6 +17,11 @@
 
     <div id="list" class="list"></div>
 
+    <div id="saving" class="saving" hidden>
+      <span id="saving-text">پیشنهاد ذخیرهٔ گذرواژه برای این سایت خاموش است.</span>
+      <button id="saving-allow" type="button">روشن کن</button>
+    </div>
+
     <div class="row">
       <label for="port">پورت گاوصندوق</label>
       <input id="port" type="number" min="1" max="65535" dir="ltr" />
@@ -29,9 +34,11 @@
 
     <p class="note">
       هیچ رمزی در مرورگر ذخیره نمی‌شود. هر بار که نام کاربری یا گذرواژه‌ای به یک صفحه داده
-      شود، در «لاگ دسترسی» گاوصندوق ثبت می‌شود.
+      شود، در «لاگ دسترسی» گاوصندوق ثبت می‌شود — و پس از یک ورود موفق، ذخیرهٔ گذرواژهٔ تازه
+      فقط با تأیید خودت در گاوصندوق نوشته می‌شود.
     </p>
 
+    <script src="../lib/browser-compat.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

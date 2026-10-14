@@ -94,6 +94,30 @@
       if (storage.indexOf(text) >= 0) found.push("storage");
       return found.length ? found.join(",") : "";
     },
+    /** Does this secret appear in what the add-on stores (port, token, preferences)? */
+    stored(secret) {
+      const text = String(secret || "");
+      if (!text) return false;
+      const dump = JSON.stringify(
+        Object.keys(window.sessionStorage).map((key) => window.sessionStorage.getItem(key))
+      );
+      return dump.indexOf(text) >= 0;
+    },
+    /** The save offer the content script draws: its message and its buttons' coordinates. */
+    bar() {
+      const element = shadowElements("div.save")[0];
+      if (!element) return { visible: false, message: "", text: "", buttons: [] };
+      const row = element.querySelector(".save-row");
+      const buttons = row ? row.querySelectorAll("button") : [];
+      return {
+        visible: true,
+        message: (element.querySelector(".save-text") || {}).textContent || "",
+        text: element.textContent.trim(),
+        buttons: Array.prototype.map.call(buttons, (button) =>
+          Object.assign({ text: button.textContent.trim() }, box(button))
+        )
+      };
+    },
     form() {
       const field = document.getElementById("pass");
       const forms = globalThis.SecureVaultContentCore.findLoginForms(document);

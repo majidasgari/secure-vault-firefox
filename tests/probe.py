@@ -50,7 +50,7 @@ for path in (str(VAULT_SRC), str(VAULT_TESTS)):
         sys.path.insert(0, path)
 
 from vault.api.service import Service  # noqa: E402
-from vault.core.credentials import CREDENTIAL_ROOT  # noqa: E402
+from vault.core.credentials import CREDENTIAL_ROOT, CredentialIndex  # noqa: E402
 from vault.web.server import WebServer  # noqa: E402
 
 from support import tmp_vault  # noqa: E402  (the vault repo's own test harness)
@@ -181,6 +181,7 @@ class HarnessServer(http.server.SimpleHTTPRequestHandler):
         if clean.endswith("popup.html"):
             page = (EXTENSION / "popup" / "popup.html").read_text(encoding="utf-8")
             page = page.replace('src="../icons/', 'src="/ext/icons/')
+            page = page.replace('src="../lib/', 'src="/ext/lib/')
             page = page.replace('href="popup.css"', 'href="/ext/popup/popup.css"')
             page = page.replace('src="popup.js"', 'src="/ext/popup/popup.js"')
             # Into <head>: the popup's own script runs on load and needs `browser` to exist first.
@@ -192,20 +193,19 @@ class HarnessServer(http.server.SimpleHTTPRequestHandler):
                 '    <script src="/assets/popup-shim.js"></script>'
             )
             return page.replace("</head>", scripts + "\n  </head>")
-        # One demo page per login shape: the plain form, the two-step (e-mail first) form, and a
-        # page with no form at all.
+        # One harness page per login shape, taken from `demo/` by name (the plain form, the
+        # two-step sign-in, the fade-in card, a sign-in that succeeds without navigating, and one
+        # that fails with an error on screen). `blank.html` is the only page built inline.
         name = clean.rsplit("/", 1)[-1]
         if name == "blank.html":
             page = (
                 '<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">'
                 "<title>بدون فرم</title></head><body><h1>هیچ فرم ورودی نیست</h1></body></html>"
             )
-        elif name == "two-step.html":
-            page = (DEMO / "two-step.html").read_text(encoding="utf-8")
-        elif name == "fade-in.html":
-            page = (DEMO / "fade-in.html").read_text(encoding="utf-8")
         else:
-            page = (DEMO / "login.html").read_text(encoding="utf-8")
+            named = DEMO / name if name == Path(name).name else None
+            source = named if named is not None and named.is_file() else DEMO / "login.html"
+            page = source.read_text(encoding="utf-8")
         scripts = "\n".join(
             f'    <script src="{shared}"></script>'
             for shared in (
@@ -636,6 +636,44 @@ def run_scenario(cdp: Cdp, checks: Checks, harness_base: str, session: object, b
                 )
                 checks.check("the code can be put away again", closed)
 
+    # 6e. The popup's undo for «هرگز برای این سایت»: the line the save prompt's own escape hatch
+    # writes has to be visible (and reversible) somewhere, and the popup is the add-on's surface.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/popup.html?ignored=1"})
+    cdp.wait_for("Boolean(window.__popup && window.__popup.ready)")
+    shown = cdp.wait_for("document.getElementById('saving').hidden === false", timeout=5)
+    checks.check("the popup shows that this site's save prompt is off", shown)
+    checks.check(
+        "the popup says what it means, in Persian",
+        "خاموش است"
+        in (cdp.evaluate("document.getElementById('saving-text').textContent") or ""),
+    )
+    allow_at = json.loads(
+        cdp.evaluate(
+            "JSON.stringify((() => { const el = document.getElementById('saving-allow');"
+            " const r = el.getBoundingClientRect();"
+            " return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })())"
+        )
+    )
+    cdp.click(allow_at["x"], allow_at["y"])
+    hidden_again = cdp.wait_for("document.getElementById('saving').hidden === true", timeout=5)
+    checks.check("turning it back on hides the line", hidden_again)
+    asked = json.loads(
+        cdp.evaluate(
+            "JSON.stringify(window.__sent.filter((message) => message.type === 'svb:save-prefs'))"
+        )
+        or "[]"
+    )
+    checks.check(
+        "the popup asked for the site's saving preference",
+        any(message.get("host") == "127.0.0.1" for message in asked),
+        asked,
+    )
+    checks.check(
+        "and it turned the prompt back on explicitly",
+        any(message.get("allow") is True for message in asked),
+        asked,
+    )
+
     # 6b. A two-step sign-in: the e-mail box deserves its own icon even though a password box
     # exists — invisibly — elsewhere on the page. This is the shape of real sign-in pages.
     cdp.send("Page.navigate", {"url": f"{harness_base}/harness/two-step.html"})
@@ -756,10 +794,280 @@ def run_scenario(cdp: Cdp, checks: Checks, harness_base: str, session: object, b
         [row for row in tools if row[0] == "session.claim"],
     )
     checks.check(
-        "the add-on wrote nothing in the vault",
+        "the add-on's fill path wrote nothing in the vault (the save flow is step 9)",
         not any(row[0] in ("write_file", "mkdir", "file_ops") for row in tools),
         [row for row in tools if row[0] in ("write_file", "mkdir", "file_ops")][:3],
     )
+
+    # 9. Saving a password the user typed by hand. The add-on watches a submit, keeps that
+    # credential in its own memory (never in storage, never back in the page), and only once the
+    # page has moved past its login form asks the vault what saving it would mean — so a
+    # successful sign-in with the password the vault already holds shows nothing at all.
+    def submit_login(values: dict) -> None:
+        """Type into the harness login form and click its submit button (a real mouse click)."""
+        cdp.evaluate(
+            "(() => {"
+            " const user = document.getElementById('user');"
+            " const pass = document.getElementById('pass');"
+            f" if (user) user.value = {json.dumps(values.get('user', ''))};"
+            f" if (pass) pass.value = {json.dumps(values.get('pass', ''))};"
+            " return true; })()"
+        )
+        click_submit()
+
+    def click_submit() -> None:
+        """Click the harness form's submit button with a real mouse click."""
+        point = json.loads(
+            cdp.evaluate(
+                "JSON.stringify((() => { const el = document.querySelector('#login button[type=submit]');"
+                " const r = el.getBoundingClientRect();"
+                " return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })())"
+            )
+        )
+        cdp.click(point["x"], point["y"])
+
+    def browser_writes() -> list[dict]:
+        """The vault's own rows for a save the add-on asked for."""
+        return [
+            row
+            for row in session.access_log(limit=400)
+            if row.get("tool") == "vault.browser_save"
+        ]
+
+    typed = "typed-by-hand-0042"
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/login-save.html"})
+    ready = cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    checks.check("the save-harness page loaded", ready)
+    cdp.evaluate("window.sessionStorage.clear()")
+    writes_before = browser_writes()
+    submit_login({"user": USERNAME, "pass": typed})
+    checks.check(
+        "the sign-in moved past its login form without navigating",
+        cdp.wait_for("window.__signedIn === true"),
+    )
+    offered = cdp.wait_for("window.__probe.bar().visible === true", timeout=12)
+    checks.check("the add-on offers to update the password it just saw typed", offered)
+    bar = json.loads(cdp.evaluate("JSON.stringify(window.__probe.bar())") or "{}")
+    checks.check("the offer says the password changed", "عوض شده" in (bar.get("message") or ""), bar)
+    labels = [button["text"] for button in (bar.get("buttons") or [])]
+    checks.equal(
+        "the offer offers update / later / never",
+        labels,
+        ["به‌روزرسانی گذرواژه", "الان نه", "هرگز برای این سایت"],
+    )
+    checks.check("the typed password is not in the offer", typed not in (bar.get("text") or ""))
+    sent = json.loads(cdp.evaluate("window.__probe.sentRaw()") or "[]")
+    attempts = [item for item in sent if item.get("type") == "svb:login-attempt"]
+    checks.equal("the typed credential crossed to the background exactly once", len(attempts), 1)
+    checks.check(
+        "no other message carries the password",
+        all(
+            typed not in json.dumps(item, ensure_ascii=False)
+            for item in sent
+            if item.get("type") != "svb:login-attempt"
+        ),
+    )
+    checks.check(
+        "the password never reached the add-on's storage",
+        cdp.evaluate(f"window.__probe.stored({json.dumps(typed)})") is False,
+    )
+    checks.check(
+        "the password never came back into the page",
+        typed not in (cdp.evaluate("document.documentElement.outerHTML") or ""),
+    )
+    checks.equal(
+        "nothing was written before the user said yes",
+        len(browser_writes()),
+        len(writes_before),
+    )
+    update = [button for button in (bar.get("buttons") or []) if button["text"] == "به‌روزرسانی گذرواژه"]
+    if update:
+        cdp.click(update[0]["x"], update[0]["y"])
+        reported = cdp.wait_for(
+            "window.__probe.bar().message.indexOf('به‌روز') >= 0"
+            " || window.__probe.bar().visible === false",
+            timeout=12,
+        )
+        checks.check("the bar reports the update", reported)
+        bar = json.loads(cdp.evaluate("JSON.stringify(window.__probe.bar())") or "{}")
+        checks.check("the bar confirms the update in Persian", "به‌روز شد" in (bar.get("message") or ""), bar)
+    stored_body = session.read_file(CREDENTIAL_PATH.strip("/"), source="ui").decode("utf-8")
+    checks.check("the vault's entry now holds the typed password", typed in stored_body, stored_body)
+    checks.check("the password it replaced is gone", PASSWORD not in stored_body, stored_body)
+    checks.check(
+        "the entry's other fields survived the update",
+        "کد یکبارمصرف" in stored_body and USERNAME in stored_body,
+        stored_body,
+    )
+
+    # 9b. A user name the vault has never seen: the same flow, but the vault writes a new entry
+    # into the credential folder's browser category — as a `secretfile`, with the notes the
+    # vault's own convention asks for.
+    fresh_user = "second-user@example.com"
+    fresh_pass = "brand-new-pass-7788"
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/login-save.html"})
+    cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    submit_login({"user": fresh_user, "pass": fresh_pass})
+    cdp.wait_for("window.__signedIn === true")
+    offered = cdp.wait_for("window.__probe.bar().visible === true", timeout=12)
+    checks.check("a user name the vault does not know is offered for saving", offered)
+    bar = json.loads(cdp.evaluate("JSON.stringify(window.__probe.bar())") or "{}")
+    checks.check(
+        "the offer is the 'new credential' wording",
+        "ذخیره شود" in (bar.get("message") or ""),
+        bar,
+    )
+    checks.check(
+        "the new-credential offer names the user name",
+        fresh_user in (bar.get("text") or ""),
+        bar,
+    )
+    labels = [button["text"] for button in (bar.get("buttons") or [])]
+    checks.equal(
+        "the new-credential offer offers save / later / never",
+        labels,
+        ["ذخیره در گاوصندوق", "الان نه", "هرگز برای این سایت"],
+    )
+    save_button = [button for button in (bar.get("buttons") or []) if button["text"] == "ذخیره در گاوصندوق"]
+    if save_button:
+        cdp.click(save_button[0]["x"], save_button[0]["y"])
+        cdp.wait_for("window.__probe.bar().message.indexOf('ذخیره شد') >= 0", timeout=12)
+    bar = json.loads(cdp.evaluate("JSON.stringify(window.__probe.bar())") or "{}")
+    checks.check("the bar confirms the save in Persian", "ذخیره شد" in (bar.get("message") or ""), bar)
+    site_folder = f"{CREDENTIAL_ROOT}/مرورگر — ورودهای ذخیره‌شده/127.0.0.1"
+    created_rows = [
+        row for row in session.index.walk(site_folder) if not int(row.get("is_dir", 0))
+    ]
+    checks.equal("the vault holds one saved entry for this site", len(created_rows), 1)
+    if created_rows:
+        created = "/" + str(created_rows[0]["logical_path"])
+        checks.equal(
+            "the saved entry is written in the category's own shape",
+            created,
+            f"/{site_folder}/127.0.0.1.md",
+        )
+        checks.equal(
+            "the saved entry is a secretfile, never a searchable note",
+            created_rows[0]["sensitivity"],
+            "secretfile",
+        )
+        created_body = session.read_file(created.strip("/"), source="ui").decode("utf-8")
+        checks.check(
+            "the saved entry holds the user name and the password",
+            fresh_user in created_body and fresh_pass in created_body,
+            created_body,
+        )
+        checks.check("the saved entry has a file note", bool(session.file_note(created)))
+        checks.check(
+            "its site folder got a folder note too",
+            bool(session.store.get_folder_note(site_folder)),
+        )
+        matched = CredentialIndex(session).match("127.0.0.1")
+        checks.check(
+            "the add-on's own lookup now finds both entries",
+            len(matched) >= 2,
+            matched,
+        )
+
+    # 9c. A sign-in the site says failed: the credential is still remembered (the page may
+    # navigate next), but nothing may be offered — and the vault must not even be asked.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/login-error.html"})
+    cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    checks_before = len([row for row in session.access_log(limit=400) if row.get("tool") == "vault.browser_save_check"])
+    submit_login({"user": USERNAME, "pass": "wrong-password-xyz"})
+    checks.check("the failing page kept its login form", cdp.wait_for("window.__failed === true"))
+    time.sleep(4.0)
+    checks.check(
+        "nothing is offered after a sign-in the site rejected",
+        cdp.evaluate("window.__probe.bar().visible") is False,
+        cdp.evaluate("window.__probe.bar()"),
+    )
+    checks.equal(
+        "the vault was not even asked about it",
+        len([row for row in session.access_log(limit=400) if row.get("tool") == "vault.browser_save_check"]),
+        checks_before,
+    )
+
+    # 9d. The password the vault itself filled is never offered for saving: the vault obviously
+    # already holds it, and a prompt there would say it does not.
+    cdp.send("Page.navigate", {"url": f"{harness_base}/harness/login.html"})
+    cdp.wait_for("Boolean(window.__probe && window.__probe.ready)")
+    icons = json.loads(cdp.evaluate("JSON.stringify(window.__probe.icons())") or "[]")
+    filled_values = {}
+    if icons:
+        cdp.click(icons[0]["x"], icons[0]["y"])
+        cdp.wait_for("window.__probe.items().length > 0")
+        items = json.loads(cdp.evaluate("JSON.stringify(window.__probe.items())") or "[]")
+        if items:
+            cdp.click(items[0]["x"], items[0]["y"])
+            cdp.wait_for("window.__probe.values().pass !== ''")
+            filled_values = json.loads(cdp.evaluate("JSON.stringify(window.__probe.values())") or "{}")
+    checks.check(
+        "the vault filled the form before the submit",
+        bool(filled_values.get("pass")),
+        filled_values,
+    )
+    click_submit()          # exactly what was filled, so the add-on sees its own credentials
+    time.sleep(3.0)
+    checks.check(
+        "a password the vault itself filled is not offered for saving",
+        cdp.evaluate("window.__probe.bar().visible") is False,
+        cdp.evaluate("window.__probe.bar()"),
+    )
+    sent = json.loads(cdp.evaluate("window.__probe.sentRaw()") or "[]")
+    checks.equal(
+        "no login attempt was handed over for the vault's own password",
+        len([item for item in sent if item.get("type") == "svb:login-attempt"]),
+        0,
+    )
+
+    # 10. What the vault recorded for the whole save flow.
+    rows = list(session.access_log(limit=400))
+    saves = browser_writes()
+    checks.equal("the vault was asked to save exactly twice (one update, one creation)", len(saves), 2)
+    checks.check(
+        "both saves are attributed to the browser and allowed",
+        all(
+            row.get("outcome") == "allow" and row.get("source") == "browser" and row.get("role") == "browser"
+            for row in saves
+        ),
+        saves,
+    )
+    checks.check(
+        "the update names the entry it rewrote",
+        any(str(row.get("target_path")) == CREDENTIAL_PATH for row in saves),
+        [row.get("target_path") for row in saves],
+    )
+    checks.equal(
+        "the vault was asked what saving means once per real login attempt",
+        len([row for row in rows if row.get("tool") == "vault.browser_save_check"]),
+        2,
+    )
+    checks.check(
+        "no password ever reached the access log",
+        not any(
+            typed in json.dumps(row, ensure_ascii=False) or fresh_pass in json.dumps(row, ensure_ascii=False)
+            for row in rows
+        ),
+    )
+
+
+def seed_scratch_vault(scratch: Path):
+    """Create the scratch vault the probes run against, with the demo credential already in it.
+
+    Shared by both probes (``probe.py`` for the Firefox-side harness and ``probe_chrome.py`` for the
+    built Chrome extension) so the fixture they assert against is the same one.
+    """
+    session = tmp_vault(scratch)
+    logical = CREDENTIAL_PATH.strip("/")
+    parts = logical.split("/")
+    for index in range(1, len(parts)):
+        try:
+            session.mkdir("/".join(parts[:index]), source="ui")
+        except Exception:  # noqa: BLE001 - the folder may already exist
+            pass
+    session.write_file(logical, CREDENTIAL_BODY.encode("utf-8"), source="ui")
+    return session
 
 
 def main() -> int:
@@ -771,15 +1079,7 @@ def main() -> int:
     scratch = Path(tempfile.mkdtemp(prefix="svb-harness-"))
     print(f"scratch: {scratch}")
 
-    session = tmp_vault(scratch)
-    logical = CREDENTIAL_PATH.strip("/")
-    parts = logical.split("/")
-    for index in range(1, len(parts)):
-        try:
-            session.mkdir("/".join(parts[:index]), source="ui")
-        except Exception:  # noqa: BLE001 - the folder may already exist
-            pass
-    session.write_file(logical, CREDENTIAL_BODY.encode("utf-8"), source="ui")
+    session = seed_scratch_vault(scratch)
     service = Service(session)
     web = WebServer(service, host="127.0.0.1", port=0, runtime_dir=session._runtime, keepalive=1.0)
     web.start()

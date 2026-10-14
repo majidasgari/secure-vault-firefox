@@ -174,7 +174,19 @@
     ".row{display:flex;gap:6px;align-items:center;padding:6px 4px 2px;border-top:1px solid #1e293b;margin-top:6px}",
     ".ghost{flex:1;background:transparent;border:1px solid #334155;border-radius:8px;color:#cbd5f5;",
     "padding:5px 8px;font-size:12px;cursor:pointer}",
-    ".badge{background:#1e293b;border-radius:999px;padding:1px 7px;font-size:11px;color:#cbd5f5}"
+    ".badge{background:#1e293b;border-radius:999px;padding:1px 7px;font-size:11px;color:#cbd5f5}",
+    ".save{position:fixed;z-index:2147483646;top:12px;right:12px;max-width:360px;background:#0f172a;",
+    "color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:10px;direction:rtl;text-align:right;",
+    "box-shadow:0 10px 28px rgba(0,0,0,.5);font-size:13px;display:flex;flex-direction:column;gap:8px}",
+    ".save .save-head{font-weight:700;font-size:12px;color:#93c5fd}",
+    ".save .save-text{line-height:1.9}",
+    ".save .save-text.err{color:#fca5a5}",
+    ".save .save-meta{color:#94a3b8;font-size:11px;direction:ltr;text-align:left;word-break:break-all}",
+    ".save .save-row{display:flex;gap:6px;flex-wrap:wrap}",
+    ".save .save-primary{background:#1d4ed8;border:0;border-radius:8px;color:#fff;padding:6px 10px;",
+    "font-size:12px;cursor:pointer;font-family:inherit}",
+    ".save .save-ghost{background:transparent;border:1px solid #334155;border-radius:8px;color:#cbd5f5;",
+    "padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit}"
   ].join("");
 
   /** The little shield, built with DOM nodes (nothing is ever parsed as HTML). */
@@ -406,6 +418,12 @@
       filledOtp = setValue(otpTarget, response.totp.code);
     }
     closePanel();
+    // Remember what the vault just put in this page, so a submit of exactly these values is not
+    // offered back for saving: the vault obviously already holds them.
+    lastFill = {
+      username: String(entry.username || ""),
+      password: String(entry.password || "")
+    };
     showToast(filledUsername || filledPassword ? TEXT.filled : TEXT.filledPartial);
     if (filledOtp) showToast(TEXT.otpFilled, "ok");
     const parts = [];
@@ -440,6 +458,239 @@
     window.setTimeout(function () {
       if (toast.parentNode) toast.parentNode.removeChild(toast);
     }, 3200);
+  }
+
+  // ----------------------------------------------------------------- saving a password
+  /*
+   * The user typed a password by hand and the page moved on: that credential is worth offering
+   * to the vault. Two rules keep this from becoming noise —
+   *
+   *  * nothing is offered for a fill the add-on itself made (`lastFill`): the vault obviously
+   *    already has that password, and asking would look like it did not;
+   *  * nothing is offered unless the page really looks like it is *past* its login form (no
+   *    visible password box still holding a value, no failure text on screen).
+   *
+   * The password itself is handed to the background once, in memory, and never comes back here:
+   * this script only ever sends «ذخیره» / «الان نه» / «هرگز» and renders the answer.
+   */
+  const SAVE_TEXT = {
+    title: "گاوصندوق امن",
+    save: "ذخیره در گاوصندوق",
+    update: "به‌روزرسانی گذرواژه",
+    later: "الان نه",
+    never: "هرگز برای این سایت",
+    fresh: "نام کاربری و گذرواژهٔ این ورود در گاوصندوق ذخیره شود؟",
+    changed: "گذرواژهٔ این سایت عوض شده؛ در گاوصندوق به‌روز شود؟",
+    saving: "در حال ذخیره…",
+    openVault: "باز کردن گاوصندوق",
+    saved: "در گاوصندوق ذخیره شد."
+  };
+
+  /** Text that means the attempt failed (nothing may be offered then). */
+  const FAILURE_TEXT =
+    /(رمز عبور|گذرواژه|نام کاربری|ایمیل)[^.\n]{0,30}(اشتباه|نادرست|نامعتبر|منقضی)|incorrect|invalid|wrong (password|username|credentials)|login failed|authentication failed|try again|too many (attempts|tries)/i;
+
+  /** What the add-on itself just filled, so its own credentials are never offered back. */
+  let lastFill = null;
+
+  /** The attempt already handed over, so one submit is not reported three times (click + submit). */
+  let lastAttempt = null;
+
+  /** How long after a submit the page is re-examined (SPAs never navigate). */
+  const OUTCOME_DELAY_MS = 1500;
+  let outcomeTimer = 0;
+  let outcomeChecks = 0;
+
+  /** The bar currently on screen (one at a time). */
+  let saveBar = null;
+
+  /** Does the page look like it is *past* its login form (the only state worth offering in)? */
+  function looksSignedIn() {
+    const body = document.body;
+    const text = body ? String(body.innerText || "").slice(0, 20000) : "";
+    if (FAILURE_TEXT.test(text)) return false;
+    if (passwordFields(document).some(function (field) { return Boolean(field.value); })) return false;
+    return !findLoginForms(document).some(function (form) { return Boolean(form.password); });
+  }
+
+  /** Tell the background what the page just did; it decides whether there is anything to offer. */
+  async function announceOutcome(phase) {
+    let response = null;
+    try {
+      response = await browser.runtime.sendMessage({
+        type: "svb:login-outcome",
+        phase: phase,
+        title: String(document.title || "").slice(0, 200)
+      });
+    } catch (error) {
+      return null;
+    }
+    // Only a positive answer draws anything: while a page is loading its own scripts, an error
+    // banner about the vault would be noise with no action behind it.
+    if (response && response.prompt) showSaveBar(response.prompt);
+    return response || null;
+  }
+
+  /** Remember the credentials of the form the user just submitted (never when the vault filled). */
+  function captureSubmit() {
+    const form = findLoginForms(document).filter(function (item) {
+      return item.password && item.password.value;
+    })[0];
+    if (!form) return false;
+    const username = form.username && form.username.value ? String(form.username.value) : "";
+    const password = String(form.password.value);
+    if (!password) return false;
+    if (lastFill && lastFill.password === password && lastFill.username === username) return false;
+    // One submit fires several events (the click on the button, the form's own submit, Enter in
+    // a field): the credential is handed over once, not once per event.
+    const now = Date.now();
+    if (
+      lastAttempt &&
+      lastAttempt.username === username &&
+      lastAttempt.password === password &&
+      now - lastAttempt.at < 5000
+    ) {
+      return false;
+    }
+    lastAttempt = { username: username, password: password, at: now };
+    browser.runtime
+      .sendMessage({
+        type: "svb:login-attempt",
+        username: username,
+        password: password,
+        title: String(document.title || "").slice(0, 200)
+      })
+      .catch(function () {});
+    outcomeChecks = 0;
+    window.clearTimeout(outcomeTimer);
+    outcomeTimer = window.setTimeout(checkAfterSubmit, OUTCOME_DELAY_MS);
+    return true;
+  }
+
+  /** A submit that does not navigate: watch the form go away by itself, for a while. */
+  function checkAfterSubmit() {
+    if (looksSignedIn()) {
+      announceOutcome("same-document");
+      return;
+    }
+    outcomeChecks += 1;
+    if (outcomeChecks < 8) {
+      outcomeTimer = window.setTimeout(checkAfterSubmit, 900);
+    }
+  }
+
+  /** Close the bar (the decision was made, or it timed out). */
+  function closeSaveBar() {
+    if (saveBar && saveBar.parentNode) saveBar.parentNode.removeChild(saveBar);
+    saveBar = null;
+  }
+
+  /** A button of the bar (nothing here is ever parsed as HTML). */
+  function barButton(label, className, onClick) {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = className;
+    element.textContent = label;
+    element.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    });
+    return element;
+  }
+
+  /** Show the one bar the user answers (it stays until answered, then goes by itself). */
+  function showSaveBar(prompt) {
+    closeSaveBar();
+    const shadow = ensureRoot();
+    const bar = document.createElement("div");
+    bar.className = "save";
+    const head = document.createElement("div");
+    head.className = "save-head";
+    head.textContent = SAVE_TEXT.title;
+    const message = document.createElement("div");
+    message.className = "save-text";
+    message.textContent =
+      prompt.state === "locked"
+        ? prompt.text || "گاوصندوق امن قفل است."
+        : prompt.state === "changed"
+          ? SAVE_TEXT.changed
+          : SAVE_TEXT.fresh;
+    const meta = document.createElement("div");
+    meta.className = "save-meta";
+    meta.textContent = [prompt.username, prompt.title && prompt.title !== prompt.host ? prompt.title : ""]
+      .filter(Boolean)
+      .join(" · ");
+    if (!meta.textContent) meta.hidden = true;
+    const row = document.createElement("div");
+    row.className = "save-row";
+    if (prompt.state === "locked") {
+      row.appendChild(
+        barButton(SAVE_TEXT.openVault, "save-primary", function () {
+          browser.runtime.sendMessage({ type: "svb:open-vault" }).catch(function () {});
+          closeSaveBar();
+        })
+      );
+      row.appendChild(barButton(SAVE_TEXT.later, "save-ghost", function () { dismissSave("later"); }));
+    } else {
+      row.appendChild(
+        barButton(prompt.state === "changed" ? SAVE_TEXT.update : SAVE_TEXT.save, "save-primary", function () {
+          saveCredential(prompt, row, message);
+        })
+      );
+      row.appendChild(barButton(SAVE_TEXT.later, "save-ghost", function () { dismissSave("later"); }));
+      row.appendChild(barButton(SAVE_TEXT.never, "save-ghost", function () { dismissSave("never"); }));
+    }
+    bar.appendChild(head);
+    bar.appendChild(message);
+    bar.appendChild(meta);
+    bar.appendChild(row);
+    shadow.appendChild(bar);
+    saveBar = bar;
+  }
+
+  /** Ask the background to write the credential the vault is still holding for this tab. */
+  async function saveCredential(prompt, row, message) {
+    row.textContent = "";
+    message.className = "save-text";
+    message.textContent = SAVE_TEXT.saving;
+    let response = null;
+    try {
+      response = await browser.runtime.sendMessage({
+        type: "svb:save-password",
+        path: prompt.state === "changed" ? prompt.path : ""
+      });
+    } catch (error) {
+      response = null;
+    }
+    if (response && response.ok) {
+      message.textContent = response.text || SAVE_TEXT.saved;
+      window.setTimeout(closeSaveBar, 3200);
+      return;
+    }
+    const failure = response && response.error ? response.error : null;
+    message.className = "save-text err";
+    message.textContent = (failure && failure.text) || TEXT.offline;
+    row.appendChild(
+      barButton(prompt.state === "changed" ? SAVE_TEXT.update : SAVE_TEXT.save, "save-ghost", function () {
+        saveCredential(prompt, row, message);
+      })
+    );
+    if (failure && (failure.reason === "vault_locked" || failure.code === "VAULT_LOCKED")) {
+      row.appendChild(
+        barButton(SAVE_TEXT.openVault, "save-ghost", function () {
+          browser.runtime.sendMessage({ type: "svb:open-vault" }).catch(function () {});
+          closeSaveBar();
+        })
+      );
+    }
+    row.appendChild(barButton(SAVE_TEXT.later, "save-ghost", function () { dismissSave("later"); }));
+  }
+
+  /** The user said no: the background drops the credential (for good, on «هرگز»). */
+  function dismissSave(mode) {
+    browser.runtime.sendMessage({ type: "svb:save-dismiss", mode: mode }).catch(function () {});
+    closeSaveBar();
   }
 
   // ------------------------------------------------------------------- lifecycle
@@ -548,6 +799,44 @@
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape") closePanel();
     });
+    // The saving flow. `submit` covers the ordinary form; a click on a submit control and Enter
+    // in a password box cover the SPAs that never fire one. Nothing leaves the page until a
+    // submit actually carried a password (`captureSubmit`), and the background decides the rest.
+    document.addEventListener(
+      "submit",
+      function () {
+        captureSubmit();
+      },
+      true
+    );
+    document.addEventListener(
+      "keydown",
+      function (event) {
+        if (event.key === "Enter" && event.target && event.target.type === "password") captureSubmit();
+      },
+      true
+    );
+    document.addEventListener(
+      "click",
+      function (event) {
+        const path = event.composedPath ? event.composedPath() : [];
+        for (let index = 0; index < path.length; index += 1) {
+          const node = path[index];
+          if (!node || node.nodeType !== 1) continue;
+          if (node.tagName === "BUTTON" && String(node.type || "").toLowerCase() === "submit") {
+            captureSubmit();
+            return;
+          }
+        }
+      },
+      true
+    );
+    // A page that already arrived *past* its login form: the background still holds the
+    // credential typed on the previous page, so this is where a navigated login is offered.
+    // (It answers from memory in one message — this costs the vault nothing on ordinary pages.)
+    window.setTimeout(function () {
+      if (looksSignedIn()) announceOutcome("load");
+    }, 400);
     browser.runtime.onMessage.addListener(function (message) {
       if (!message) return undefined;
       if (message.type === "svb:ping") {
@@ -586,6 +875,9 @@
   core.sweep = sweep;
   core.fillFirst = fillFirst;
   core.openPanel = openPanel;
+  core.captureSubmit = captureSubmit;
+  core.looksSignedIn = looksSignedIn;
+  core.announceOutcome = announceOutcome;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

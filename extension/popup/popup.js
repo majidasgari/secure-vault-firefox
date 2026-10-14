@@ -16,7 +16,10 @@ const ui = {
   list: document.getElementById("list"),
   port: document.getElementById("port"),
   save: document.getElementById("save"),
-  open: document.getElementById("open")
+  open: document.getElementById("open"),
+  saving: document.getElementById("saving"),
+  savingText: document.getElementById("saving-text"),
+  savingAllow: document.getElementById("saving-allow")
 };
 
 /** Host of a URL, or "" for anything that is not http(s). */
@@ -32,6 +35,30 @@ function hostOf(url) {
 
 /** The host of the tab being looked at — the vault matches entries for *this* host only. */
 let currentHost = "";
+
+/** The line the save prompt's «هرگز برای این سایت» writes: shown (and undoable) here. */
+async function renderSavingSwitch(host) {
+  if (!ui.saving) return;
+  ui.saving.hidden = true;
+  if (!host) return;
+  let answer = null;
+  try {
+    answer = await browser.runtime.sendMessage({ type: "svb:save-prefs", host: host });
+  } catch (error) {
+    return;
+  }
+  if (!answer || !answer.ok || !answer.ignored) return;
+  ui.savingText.textContent = "پیشنهاد ذخیرهٔ گذرواژه برای این سایت خاموش است.";
+  ui.saving.hidden = false;
+}
+
+ui.savingAllow.addEventListener("click", async function () {
+  if (!currentHost) return;
+  await browser.runtime
+    .sendMessage({ type: "svb:save-prefs", host: currentHost, allow: true })
+    .catch(() => null);
+  ui.saving.hidden = true;
+});
 
 /** The one code box that is open. The popup shows a single live code at a time. */
 let openOtp = null;
@@ -49,6 +76,7 @@ async function loadCandidates(tab) {
   const host = tab ? hostOf(tab.url) : "";
   currentHost = host;
   ui.host.textContent = host || "";
+  renderSavingSwitch(host);
   if (!host) {
     ui.list.textContent = "";
     const note = document.createElement("div");

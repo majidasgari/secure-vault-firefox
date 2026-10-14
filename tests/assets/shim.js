@@ -34,6 +34,7 @@
   const listeners = [];
   const commands = [];
   const tabListeners = [];
+  const removedListeners = [];
   window.__sent = [];
 
   function dispatch(message, sender) {
@@ -75,7 +76,10 @@
       query: () => Promise.resolve([{ id: 1, url: window.location.href }]),
       create: (options) => Promise.resolve({ id: 2, url: options && options.url }),
       sendMessage: (tabId, message) => dispatch(message),
-      onUpdated: { addListener: (listener) => tabListeners.push(listener) }
+      onUpdated: { addListener: (listener) => tabListeners.push(listener) },
+      onRemoved: { addListener: (listener) => removedListeners.push(listener) },
+      /** The harness closes a tab for the background: its half-typed credential must go with it. */
+      __remove: (tabId) => removedListeners.forEach((listener) => listener(tabId, {}))
     }
   };
 })();

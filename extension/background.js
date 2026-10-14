@@ -1,15 +1,23 @@
 /*
  * Background event page: the only place that talks to the vault.
  *
- * The content script and the popup ask for one of seven things and never see the vault's token.
+ * The content script and the popup ask for one of ten things and never see the vault's token.
  * The host that a lookup is made for is taken from the *sender's* URL, never from the page, so a
  * script on the page cannot ask for another site's credentials. Filling happens in the frame
- * that asked, and nothing is written to disk but the port and the (revocable) browser token.
+ * that asked, and nothing is written to disk but the port, the (revocable) browser token and the
+ * add-on's own saving preferences.
  *
- * One of those seven is new and worth naming: ``svb:otp`` returns the *current one-time code* of
- * one entry, so the popup can show it the way the vault's own viewer does. It costs one audited
- * reveal per entry (not per tick — see `otpValues`), and the value it generates from never leaves
- * this page: the popup receives the six digits, never the secret behind them.
+ * Two of those ten are worth naming. ``svb:otp`` returns the *current one-time code* of one entry,
+ * so the popup can show it the way the vault's own viewer does; it costs one audited reveal per
+ * entry (not per tick — see `otpValues`), and the value it generates from never leaves this page:
+ * the popup receives the six digits, never the secret behind them.
+ *
+ * ``svb:login-attempt`` / ``svb:login-outcome`` / ``svb:save-password`` are the "save this
+ * password?" flow, and they are the only place in the add-on where a password crosses a boundary:
+ * the content script that watched the user type one hands it over here, it lives in this page's
+ * memory for a few minutes (`pendingLogins`) and it is either written into the vault — through the
+ * bridge's narrow save call, which picks the entry itself — or dropped. It is never written to
+ * storage, never handed back to a page and never shown in the popup.
  */
 "use strict";
 
@@ -27,6 +35,7 @@ const MESSAGE_TEXT = {
   NO_HOST: "این صفحه آدرس معتبری ندارد.",
   NO_ENTRY: "ورودی‌ای برای این سایت در گاوصندوق نیست.",
   NO_OTP: "این ورودی کد یکبارمصرفِ خواندنی ندارد.",
+  NO_ATTEMPT: "این ورود دیگر در دسترس نیست؛ یک‌بار دیگر وارد شو.",
   BAD_REQUEST: "درخواست نامعتبر بود.",
   NOT_FOUND: "این ورودی در گاوصندوق پیدا نشد.",
   VAULT_ERROR: "گاوصندوق خطا داد."
@@ -35,11 +44,18 @@ const MESSAGE_TEXT = {
 /** The vault reports several distinct refusals as PERMISSION_DENIED with a specific message. */
 const VAULT_REASON_TEXT = {
   browser_autofill_disabled: "تکمیل خودکار مرورگر در گاوصندوق خاموش است.",
+  browser_save_disabled: "ذخیرهٔ گذرواژه از مرورگر در گاوصندوق خاموش است.",
   too_many_reveals: "تعداد درخواست‌ها زیاد شد؛ چند لحظه بعد دوباره تلاش کن.",
+  too_many_checks: "تعداد درخواست‌ها زیاد شد؛ چند لحظه بعد دوباره تلاش کن.",
+  too_many_saves: "تعداد ذخیره‌ها زیاد شد؛ چند لحظه بعد دوباره تلاش کن.",
   path_outside_credentials: "این ورودی مربوط به این سایت نیست.",
+  path_not_for_host: "این ورودی مربوط به این سایت نیست.",
   host_mismatch: "این ورودی مربوط به این سایت نیست.",
   vault_locked: "گاوصندوق امن قفل است؛ قفلش را در برنامه باز کن.",
-  missing_host: "این صفحه آدرس معتبری ندارد."
+  missing_host: "این صفحه آدرس معتبری ندارد.",
+  missing_password: "گذرواژه‌ای برای ذخیره پیدا نشد.",
+  unstorable_value: "این گذرواژه در گاوصندوق ذخیره‌شدنی نیست (نویسهٔ ناخواسته دارد).",
+  field_too_long: "این مقدار برای ذخیره در گاوصندوق بلند است."
 };
 
 /** Turn a failure into the shape both UIs render. */
@@ -226,6 +242,185 @@ async function onOtpForget() {
   return { ok: true };
 }
 
+/*
+ * ---------------------------------------------------------------- saving a password
+ *
+ * The flow, end to end: the content script watched a submit (`svb:login-attempt`, the only
+ * message that carries a password) → the page moved past its login form and the content script
+ * says so (`svb:login-outcome`) → the vault is asked what saving that credential *would* mean →
+ * the bar the user sees («ذخیره» / «الان نه» / «هرگز برای این سایت») decides whether
+ * `svb:save-password` is ever sent. A successful login with the password the vault already holds
+ * ends the flow at the third step: the vault answers `same`, nothing is written and nothing is
+ * shown.
+ */
+
+/** How long a typed credential is kept in this page's memory (never in storage). */
+const PENDING_TTL_MS = 5 * 60 * 1000;
+
+/** Longest values this page accepts from a content script (the vault caps them again). */
+const MAX_USERNAME = 256;
+const MAX_PASSWORD = 512;
+const MAX_TITLE = 200;
+
+/** The credential the user typed and this page is still holding, keyed by tab (memory only). */
+const pendingLogins = new Map();
+
+/** The sites the user told the add-on never to offer saving for (add-on preference, not a secret). */
+async function savePreferences() {
+  const stored = await browser.storage.local.get({ saveOffer: true, saveIgnore: [] });
+  const ignore = Array.isArray(stored.saveIgnore) ? stored.saveIgnore.map(String) : [];
+  return { offer: stored.saveOffer !== false, ignore: ignore };
+}
+
+/** Drop the attempts that are too old to be acted on. */
+function prunePending(stamp) {
+  const now = stamp || Date.now();
+  pendingLogins.forEach(function (attempt, tabId) {
+    if (now - attempt.at > PENDING_TTL_MS) pendingLogins.delete(tabId);
+  });
+}
+
+/** Handler: the page submitted a login form — remember it (in memory) without calling the vault. */
+async function onLoginAttempt(message, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : 0;
+  const url = (sender && sender.url) || (sender && sender.tab && sender.tab.url) || "";
+  const host = hostOf(url);
+  const username = String((message && message.username) || "").slice(0, MAX_USERNAME);
+  const password = String((message && message.password) || "").slice(0, MAX_PASSWORD);
+  const title = String((message && message.title) || "").slice(0, MAX_TITLE);
+  if (!tabId || !host || !password) return failure({ code: "BAD_REQUEST" });
+  prunePending();
+  pendingLogins.set(tabId, {
+    host: host,
+    url: url,
+    username: username,
+    password: password,
+    title: title,
+    at: Date.now()
+  });
+  return { ok: true, host: host };
+}
+
+/** Handler: the page looks like it is past its login form — may it offer to save? */
+async function onLoginOutcome(message, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : 0;
+  const host = hostOf((sender && sender.url) || (sender && sender.tab && sender.tab.url));
+  prunePending();
+  const attempt = tabId ? pendingLogins.get(tabId) : null;
+  if (!attempt || !host || attempt.host !== host) return { ok: true, prompt: null };
+  const prefs = await savePreferences();
+  if (!prefs.offer || prefs.ignore.indexOf(host) >= 0) return { ok: true, prompt: null };
+  if (message && message.title) {
+    attempt.title = String(message.title).slice(0, MAX_TITLE);
+  }
+  await client.configure();
+  const status = await client.status().catch(() => null);
+  if (!status || status.enabled === false || status.save_enabled === false) {
+    // The vault itself switched saving off: say nothing at all (that is what the switch means).
+    return { ok: true, prompt: null };
+  }
+  if (status.locked) {
+    return {
+      ok: true,
+      prompt: {
+        state: "locked",
+        host: host,
+        username: attempt.username,
+        text: "گاوصندوق امن قفل است؛ برای ذخیرهٔ این گذرواژه بازش کن."
+      }
+    };
+  }
+  try {
+    const verdict = await client.saveCheck(host, attempt.url, attempt.username, attempt.password, attempt.title);
+    if (!verdict || verdict.state === "same") {
+      // The vault already holds exactly this password: nothing to offer, nothing to write.
+      pendingLogins.delete(tabId);
+      return { ok: true, prompt: null };
+    }
+    return {
+      ok: true,
+      prompt: {
+        state: verdict.state,
+        host: verdict.host || host,
+        path: verdict.path || "",
+        title: verdict.title || "",
+        site: verdict.site || "",
+        username: verdict.username || attempt.username
+      }
+    };
+  } catch (error) {
+    // Keep the attempt: the user may unlock the vault and click again.
+    return failure(error);
+  }
+}
+
+/** Handler: the user said yes — write it into the vault. */
+async function onSavePassword(message, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : 0;
+  const host = hostOf((sender && sender.url) || (sender && sender.tab && sender.tab.url));
+  const attempt = tabId ? pendingLogins.get(tabId) : null;
+  if (!attempt || !host || attempt.host !== host) return failure({ code: "NO_ATTEMPT" });
+  await client.configure();
+  try {
+    const result = await client.save(host, {
+      username: attempt.username,
+      password: attempt.password,
+      url: attempt.url,
+      title: attempt.title,
+      path: String((message && message.path) || "")
+    });
+    pendingLogins.delete(tabId);
+    return {
+      ok: true,
+      state: result.state,
+      path: result.path,
+      title: result.title,
+      text:
+        result.state === "updated"
+          ? "گذرواژهٔ «" + (result.title || host) + "» در گاوصندوق به‌روز شد."
+          : "ورود «" + (result.title || host) + "» در گاوصندوق ذخیره شد."
+    };
+  } catch (error) {
+    // The attempt stays: unlocking the vault and clicking again must work.
+    return failure(error);
+  }
+}
+
+/** Handler: the user said no — drop it, and remember a "never for this site" for good. */
+async function onSaveDismiss(message, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : 0;
+  const host = hostOf((sender && sender.url) || (sender && sender.tab && sender.tab.url));
+  const attempt = tabId ? pendingLogins.get(tabId) : null;
+  if (tabId) pendingLogins.delete(tabId);
+  if (message && message.mode === "never" && host) {
+    const prefs = await savePreferences();
+    if (prefs.ignore.indexOf(host) < 0) {
+      prefs.ignore.push(host);
+      await browser.storage.local.set({ saveIgnore: prefs.ignore });
+    }
+  }
+  return { ok: true, host: host, forgotten: Boolean(attempt) };
+}
+
+/** Handler: the popup reads (or clears) the add-on's own saving preference for one site. */
+async function onSavePrefs(message) {
+  const host = sanitizeHost(message && message.host) || "";
+  const prefs = await savePreferences();
+  let ignore = prefs.ignore;
+  if (host && message && message.allow === true && ignore.indexOf(host) >= 0) {
+    ignore = ignore.filter(function (entry) {
+      return entry !== host;
+    });
+    await browser.storage.local.set({ saveIgnore: ignore });
+  }
+  return {
+    ok: true,
+    host: host,
+    offer: prefs.offer,
+    ignored: Boolean(host) && ignore.indexOf(host) >= 0
+  };
+}
+
 /** Handler: the port the user typed in the popup. */
 async function onSetPort(message) {
   await client.configure();
@@ -312,11 +507,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (type === "svb:fill") return onFill(message, sender);
   if (type === "svb:otp") return onOtp(message, sender);
   if (type === "svb:otp-forget") return onOtpForget();
+  if (type === "svb:login-attempt") return onLoginAttempt(message, sender);
+  if (type === "svb:login-outcome") return onLoginOutcome(message, sender);
+  if (type === "svb:save-password") return onSavePassword(message, sender);
+  if (type === "svb:save-dismiss") return onSaveDismiss(message, sender);
+  if (type === "svb:save-prefs") return onSavePrefs(message);
   if (type === "svb:set-port") return onSetPort(message);
   if (type === "svb:open-vault") return onOpenVault();
   if (type === "svb:tab-probe") return onTabProbe(message);
   if (type === "svb:tab-fill") return onTabFill(message);
   return undefined;
+});
+
+/** A closed tab takes its half-typed credential with it (nothing left in memory). */
+browser.tabs.onRemoved.addListener((tabId) => {
+  pendingLogins.delete(tabId);
 });
 
 /** The keyboard shortcut fills the top candidate in the active tab. */

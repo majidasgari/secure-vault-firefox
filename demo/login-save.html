@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ورود — دمو</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px 16px;
+        background: #0b1120;
+        color: #e5e7eb;
+        font-family: Vazirmatn, system-ui, Tahoma, sans-serif;
+        direction: rtl;
+      }
+      form,
+      #done {
+        max-width: 360px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        background: #111c33;
+        border: 1px solid #1f2b45;
+        border-radius: 12px;
+        padding: 20px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 6px;
+      }
+      label {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+      input {
+        background: #0f172a;
+        border: 1px solid #1f2b45;
+        border-radius: 8px;
+        color: #e5e7eb;
+        padding: 10px;
+        font: inherit;
+        direction: ltr;
+        text-align: left;
+      }
+      button[type="submit"] {
+        background: #1d4ed8;
+        border: 0;
+        border-radius: 8px;
+        color: #fff;
+        padding: 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      p.hint {
+        max-width: 360px;
+        margin: 16px auto 0;
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.9;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="login" action="#">
+      <h1>ورود به حساب (صفحهٔ آزمایشی)</h1>
+      <label for="user">نام کاربری</label>
+      <input id="user" name="username" type="email" autocomplete="username" />
+      <label for="pass">گذرواژه</label>
+      <input id="pass" name="password" type="password" autocomplete="current-password" />
+      <button type="submit">ورود</button>
+    </form>
+    <p class="hint">
+      این صفحه یک ورود موفق بی‌جابه‌جایی (SPA) را شبیه‌سازی می‌کند: فرم پس از ارسال از صفحه حذف
+      می‌شود، پس افزونه باید بفهمد ورود موفق بوده و ذخیرهٔ گذرواژه را پیشنهاد بدهد.
+    </p>
+    <script>
+      // A successful sign-in that never navigates: the login form disappears and the "app" takes
+      // its place. This is the shape the add-on has to recognise on its own (the same document),
+      // and it is deliberately built with no error text anywhere on the page.
+      document.getElementById("login").addEventListener("submit", function (event) {
+        event.preventDefault();
+        const typed = document.getElementById("user") ? document.getElementById("user").value : "";
+        document.getElementById("login").remove();
+        const done = document.createElement("div");
+        done.id = "done";
+        const heading = document.createElement("h1");
+        heading.textContent = "خوش آمدی";
+        const line = document.createElement("p");
+        line.textContent = typed;
+        done.appendChild(heading);
+        done.appendChild(line);
+        document.body.appendChild(done);
+        document.title = "داشبورد — دمو";
+        window.__signedIn = true;
+      });
+    </script>
+  </body>
+</html>
